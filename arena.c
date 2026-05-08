@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 bool is_power_of_two(uintptr_t x) { return (x & (x - 1)) == 0; }
@@ -69,10 +70,6 @@ void *arena_alloc(Arena *a, size_t size) {
   return arena_alloc_align(a, size, DEFAULT_ALIGNMENT);
 }
 
-void arena_free(Arena *a, void *ptr) {
-  // Do nothing
-}
-
 void *arena_resize_align(Arena *a, void *old_memory, size_t old_size,
                          size_t new_size, size_t align) {
   unsigned char *old_mem = (unsigned char *)old_memory;
@@ -135,3 +132,26 @@ void temp_arena_memory_end(Temp_Arena_Memory temp) {
   temp.arena->prev_offset = temp.prev_offset;
   temp.arena->curr_offset = temp.curr_offset;
 }
+
+Temp_Arena_Memory scratch_get_free(Arena **arenaPool, int arenaPoolSize,
+                                   Arena **conflictingArenas,
+                                   int conflictingArenaSize) {
+  for (int i = 0; i < arenaPoolSize; i++) {
+    bool conflict = false;
+    for (int z = 0; z < conflictingArenaSize; z++) {
+      if (arenaPool[i] == conflictingArenas[z]) {
+        conflict = true;
+      }
+    }
+    if (!conflict) {
+      return temp_arena_memory_begin(arenaPool[i]);
+    }
+  }
+  // unreachable
+  exit(EXIT_FAILURE);
+}
+
+#define GetScratch() scratch_get_free(arenas, 2, 0, 0)
+
+#define GetScratchConflict(conflictingArenas, num)                             \
+  scratch_get_free(arenas, 2, conflictingArenas, num)

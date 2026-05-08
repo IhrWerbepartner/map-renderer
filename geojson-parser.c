@@ -1,8 +1,15 @@
 #include "arena.c"
 #include "string8.c"
+#include <assert.h>
+#include <errno.h>
+#include <math.h>
+#include <raylib.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
 
 typedef struct geo_properties {
   string8 key;
@@ -85,7 +92,7 @@ typedef struct JsonNode {
     struct {
       union {
         uint64_t u_value; // the value of INTEGER or BOOL node
-        uint64_t s_value;
+        int64_t s_value;
       };
       double dbl_value; // the value of DOUBLE node
     } num;
@@ -98,20 +105,12 @@ typedef struct JsonNode {
   struct JsonNode *next; // points to next child
 } JsonNode;
 
-typedef int (*json_unicode_encoder)(unsigned int codepoint, char *p,
-                                    char **endp);
+static Arena a1 = {0};
+static Arena a2 = {0};
+Arena *arenas[2] = {&a1, &a2};
 
-#include <assert.h>
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-// redefine JSON_REPORT_ERROR to use custom error reporting
-#ifndef JSON_REPORT_ERROR
 #define JSON_REPORT_ERROR(msg, p)                                              \
   fprintf(stderr, "NXJSON PARSE ERROR (%d): " msg " at %s\n", __LINE__, p)
-#endif
 
 #define IS_WHITESPACE(c) ((unsigned char)(c) <= (unsigned char)' ')
 
@@ -149,7 +148,7 @@ static string8 unescape_string(char *s, char **end) {
     if (c == '"') {
       *d = '\0';
       *end = p;
-      return from_c_string(s, p - s);
+      return from_c_string(s, (size_t)(p - s));
     } else if (c == '\\') {
       switch (*p) {
       case '\\':
@@ -179,6 +178,7 @@ static string8 unescape_string(char *s, char **end) {
         break;
       case 'u': // unicode
         JSON_REPORT_ERROR("unicode not supported", p - 1);
+        exit(EXIT_FAILURE);
       default:
         // leave untouched
         *d++ = c;
@@ -333,9 +333,9 @@ static char *parse_value(Arena *arena, JsonNode *parent, string8 key, char *p) {
         }
       } else {
         if (*p == '-') {
-          js->num.dbl_value = js->num.s_value;
+          js->num.dbl_value = (double) js->num.s_value;
         } else {
-          js->num.dbl_value = js->num.u_value;
+          js->num.dbl_value = (double) js->num.u_value;
         }
       }
       return pe;
@@ -412,9 +412,138 @@ Geo_Json *geo_json_parse(Arena *arena, char *filepath) {
     exit(EXIT_FAILURE);
   }
 
-  Arena *scratch = get_scratch();
+  Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
+  fseek(f, 0, SEEK_END);
+  size_t fsize = (size_t)ftell(f);
+  fseek(f, 0, SEEK_SET); /* same as rewind(f); */
+
+  char *buffer = arena_alloc(scratch.arena, fsize + 1);
+  fread(buffer, fsize, 1, f);
+  fclose(f);
+
   JsonNode js = {0};
-  parse_value(arena, &js, 0, text);
-  serialize(arena, js);
+  parse_value(arena, &js, (string8){0}, buffer);
+  // serialize(arena, js);
+
+  temp_arena_memory_end(scratch);
   return (Geo_Json *){0}; // TODO:
+}
+
+void usage(char *program_name) {
+  printf("usage: %s <filepath>\n", program_name);
+}
+
+int main(int argc, char **argv) {
+  if (argc != 2) {
+    usage(argv[0]);
+    exit(EXIT_FAILURE);
+  }
+  size_t backing_buffer_size = 1024 * 1024 * 1024;
+  void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  arena_init(arenas[0], backing_buffer, backing_buffer_size);
+
+  backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  arena_init(arenas[1], backing_buffer, backing_buffer_size);
+  Geo_Json *json = geo_json_parse(GetScratch().arena, argv[1]);
+
+  //--------------------------------------------------------------------------------------
+  // Initialization
+  //--------------------------------------------------------------------------------------
+  const int screenWidth = 1920;
+  const int screenHeight = 1080;
+
+  InitWindow(screenWidth, screenHeight, "raylib [core] example - 2d camera");
+
+  Rectangle player = {400, 280, 40, 40};
+
+  Camera2D camera = {0};
+  camera.target = (Vector2){player.x, player.y};
+  camera.offset =
+      (Vector2){(float)screenWidth / 2.0f, (float)screenHeight / 2.0f};
+  camera.rotation = 0.0f;
+  camera.zoom = 1.0f;
+
+  // Main game loop
+  while (!WindowShouldClose()) // Detect window close button or ESC key
+  {
+    // Update
+    //----------------------------------------------------------------------------------
+    // Player movement
+    if (IsKeyDown(KEY_RIGHT))
+      player.x += 2;
+    else if (IsKeyDown(KEY_LEFT))
+      player.x -= 2;
+
+    // Camera target follows player
+    camera.target = (Vector2){player.x, player.y};
+
+    // Camera rotation controls
+    if (IsKeyDown(KEY_A))
+      camera.rotation--;
+    else if (IsKeyDown(KEY_S))
+      camera.rotation++;
+
+    // Limit camera rotation to 80 degrees (-40 to 40)
+    if (camera.rotation > 40)
+      camera.rotation = 40;
+    else if (camera.rotation < -40)
+      camera.rotation = -40;
+
+    // Camera zoom controls
+    // Uses log scaling to provide consistent zoom speed
+    camera.zoom = expf(logf(camera.zoom) + ((float)GetMouseWheelMove() * 0.1f));
+
+    if (camera.zoom > 3.0f)
+      camera.zoom = 3.0f;
+    else if (camera.zoom < 0.1f)
+      camera.zoom = 0.1f;
+
+    // Camera reset (zoom and rotation)
+    if (IsKeyPressed(KEY_R)) {
+      camera.zoom = 1.0f;
+      camera.rotation = 0.0f;
+    }
+    //----------------------------------------------------------------------------------
+
+    // Draw
+    //----------------------------------------------------------------------------------
+    BeginDrawing();
+
+    ClearBackground(RAYWHITE);
+
+    BeginMode2D(camera);
+
+    DrawRectangle(-6000, 320, 13000, 8000, DARKGRAY);
+
+    DrawRectangleRec(player, RED);
+
+    EndMode2D();
+
+    DrawText("SCREEN AREA", 640, 10, 20, RED);
+
+    DrawRectangle(0, 0, screenWidth, 5, RED);
+    DrawRectangle(0, 5, 5, screenHeight - 10, RED);
+    DrawRectangle(screenWidth - 5, 5, 5, screenHeight - 10, RED);
+    DrawRectangle(0, screenHeight - 5, screenWidth, 5, RED);
+
+    DrawRectangle(10, 10, 250, 113, Fade(SKYBLUE, 0.5f));
+    DrawRectangleLines(10, 10, 250, 113, BLUE);
+
+    DrawText("Free 2D camera controls:", 20, 20, 10, BLACK);
+    DrawText("- Right/Left to move player", 40, 40, 10, DARKGRAY);
+    DrawText("- Mouse Wheel to Zoom in-out", 40, 60, 10, DARKGRAY);
+    DrawText("- A / S to Rotate", 40, 80, 10, DARKGRAY);
+    DrawText("- R to reset Zoom and Rotation", 40, 100, 10, DARKGRAY);
+
+    EndDrawing();
+    //----------------------------------------------------------------------------------
+  }
+
+  // De-Initialization
+  //--------------------------------------------------------------------------------------
+  CloseWindow(); // Close window and OpenGL context
+  //--------------------------------------------------------------------------------------
+  return 0;
 }

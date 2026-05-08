@@ -14,7 +14,7 @@ string8 from_c_string(char *string, size_t len) {
 
 // returns -1 if a is earlier 0 if equal 1 if later
 int string8_compare(string8 a, string8 b) {
-  for (int i = 0; i < a.len && b.len; i++) {
+  for (size_t i = 0; i < a.len && b.len; i++) {
     if (a.buf[i] < b.buf[i]) {
       return -1;
     }
