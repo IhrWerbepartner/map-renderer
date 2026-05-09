@@ -1,4 +1,5 @@
 #include "arena.c"
+#include "fixed-array.c"
 #include "string8.c"
 #include <assert.h>
 #include <errno.h>
@@ -11,68 +12,81 @@
 #include <string.h>
 #include <sys/mman.h>
 
-typedef struct geo_properties {
+#define ERROR_MSG(msg)                                                         \
+  fprintf(stderr, "ERROR: %s\n", msg);                                         \
+  exit(EXIT_FAILURE);
+
+typedef struct Point2D {
+  double x;
+  double y;
+} Point2D;
+
+DeclFixedArray(Point2DArray, Point2D)
+
+    typedef struct geo_properties {
   string8 key;
   void *val;
-} Geo_Properties;
+} GeoProperties;
 
-typedef struct point {
-  double coordinates[2];
+typedef struct Point {
+  Point2D coordinates;
 } Point;
 
 typedef struct multi_point {
-  double *coordinates[2];
-} Multi_Point;
+  Point2DArray coordinates;
+} MultiPoint;
 
 typedef struct line_string {
-  double *coordinates[2];
-} Line_String;
+  Point2DArray coordinates;
+} LineString;
 
-typedef struct multi_line_string {
-  double **coordinates[2];
-} Multi_Line_String;
+DeclFixedArray(LineStringArray, LineString)
+
+    typedef struct multi_line_string {
+  LineStringArray coordinates;
+} MultiLineString;
 
 typedef struct polygon {
-  double **coordinates[2];
+  Point2DArray outside_coordinates;
+  Point2DArray inside_coordinates;
 } Polygon;
 
-typedef struct multi_polygon {
-  double ***coordinates[2];
-} Multi_Polygon;
+DeclFixedArray(PolygonArray, Polygon)
 
-typedef struct geo_geometry {
-  enum geo_geometry_type {
-    POINT,
-    MULTI_POINT,
-    LINE_STRING,
-    MULTI_LINE_STRING,
-    POLYGON,
-    MULTI_POLYGON,
-  } type;
-  union {
-    Point point;
-    Multi_Point multi_point;
-    Line_String line_string;
-    Multi_Line_String multi_line_string;
-    Polygon polygon;
-    Multi_Polygon multi_polygon;
-  };
-} Geo_Geometry;
+    typedef struct multi_polygon {
+  PolygonArray coordinates;
+} MultiPolygon;
 
-typedef struct geo_feature {
-  enum geo_feature_type {
-    FEATURE,
-  } type;
-  Geo_Geometry geometry;
-  Geo_Properties properties;
-} Geo_Feature;
+DeclFixedArray(PointArray, Point) DeclFixedArray(MultiPointArray, MultiPoint)
+    DeclFixedArray(MultiLineStringArray, MultiLineString)
+        DeclFixedArray(GeoPropertiesArray, GeoProperties)
+            DeclFixedArray(MultiPolygonArray, MultiPolygon)
 
-typedef struct geo_json {
+                typedef struct geo_json {
   enum geo_json_type {
     FEATURE_COLLECTION,
   } type;
-  Geo_Feature *features;
+
+  // SoA layout
+  PointArray points;
+  MultiPointArray multi_points;
+  LineStringArray line_strings;
+  MultiLineStringArray multi_line_strings;
+  PolygonArray polygons;
+  MultiPolygonArray multi_polygons;
+
+  GeoPropertiesArray properties; // TODO: add a handle in the types for as an
+                                 // index in to the properties array
 } Geo_Json;
+
+void init_all_arrays(Arena *arena, Geo_Json *base, size_t capacity) {
+  base->points = PointArray_new(arena, capacity);
+  base->multi_points = MultiPointArray_new(arena, capacity);
+  base->line_strings = LineStringArray_new(arena, capacity);
+  base->multi_line_strings = MultiLineStringArray_new(arena, capacity);
+  base->polygons = PolygonArray_new(arena, capacity);
+  base->multi_polygons = MultiPolygonArray_new(arena, capacity);
+}
 
 typedef enum JsonType {
   JSON_NULL,    // this is null value
@@ -148,7 +162,7 @@ static string8 unescape_string(char *s, char **end) {
     if (c == '"') {
       *d = '\0';
       *end = p;
-      return from_c_string(s, (size_t)(p - s));
+      return from_c_string_len(s, (size_t)(p - s));
     } else if (c == '\\') {
       switch (*p) {
       case '\\':
@@ -333,9 +347,9 @@ static char *parse_value(Arena *arena, JsonNode *parent, string8 key, char *p) {
         }
       } else {
         if (*p == '-') {
-          js->num.dbl_value = (double) js->num.s_value;
+          js->num.dbl_value = (double)js->num.s_value;
         } else {
-          js->num.dbl_value = (double) js->num.u_value;
+          js->num.dbl_value = (double)js->num.u_value;
         }
       }
       return pe;
@@ -406,10 +420,132 @@ const JsonNode *json_item(const JsonNode *json, int idx) {
   return NULL;
 }
 
+// serialization helpers
+//
+//
+
+// locates a child node with given key, value pair
+JsonNode *find_key_value_in_children(JsonNode *node, string8 key,
+                                     string8 value) {
+  JsonNode *current = node->children.first;
+  while (current->next != NULL) {
+    current = current->next;
+    if (current->type == JSON_STRING) {
+      if (string8_equals(current->key, key) &&
+          string8_equals(current->text_value, value)) {
+        return current;
+      }
+    }
+  }
+  return NULL;
+}
+
+// locates a child node with given key
+JsonNode *find_key_in_children(JsonNode *node, string8 key) {
+  JsonNode *current = node->children.first;
+  while (current->next != NULL) {
+    current = current->next;
+    if (string8_equals(current->key, key)) {
+      return current;
+    }
+  }
+  return NULL;
+}
+
+Point serialize_point(JsonNode *coordinates) {
+  if (coordinates->type != JSON_ARRAY || coordinates->children.length != 2) {
+    ERROR_MSG("invalid coordinates for Point supplied")
+  }
+  JsonNode *x_coordinate = coordinates->children.first;
+  JsonNode *y_coordinate = coordinates->children.last;
+  if (x_coordinate->type != JSON_DOUBLE || y_coordinate->type != JSON_DOUBLE) {
+    ERROR_MSG("invalid coordinate type for Point supplied")
+  }
+  return (Point){.coordinates = (Point2D){
+                     .x = x_coordinate->num.dbl_value,
+                     .y = y_coordinate->num.dbl_value,
+                 }};
+}
+
+Geo_Json *serialize(Arena *arena, JsonNode *root) {
+  Geo_Json *parsed = (Geo_Json *)arena_alloc(arena, sizeof(Geo_Json));
+  if (root->type != JSON_NULL || root->children.length != 1) {
+    ERROR_MSG("invalid json")
+  }
+  root = root->children.first;
+  if (root->type != JSON_OBJECT) {
+    ERROR_MSG("invalid object")
+  }
+  JsonNode *const featureCollcetionType = find_key_value_in_children(
+      root, from_c_string("type"), from_c_string("FeatureCollection"));
+  if (featureCollcetionType == NULL) {
+    ERROR_MSG("invalid geojson type")
+  }
+  JsonNode *const features =
+      find_key_in_children(root, from_c_string("features"));
+  if (features == NULL || features->type != JSON_ARRAY) {
+    ERROR_MSG("invalid geojson features")
+  }
+  init_all_arrays(arena, parsed, features->children.length);
+  JsonNode *current_child = features->children.first;
+
+  // parese all "Features" in their appropiate arrays
+  while (current_child != NULL) {
+    JsonNode *const feature_type = find_key_value_in_children(
+        current_child, from_c_string("type"), from_c_string("Feature"));
+    if (feature_type == NULL) {
+      ERROR_MSG("invalid feature type")
+    }
+
+    JsonNode *const geometry =
+        find_key_in_children(current_child, from_c_string("geometry"));
+    if (geometry == NULL || geometry->type != JSON_OBJECT) {
+      ERROR_MSG("invalid or no geometry suppiled")
+    }
+
+    JsonNode *const geometry_type =
+        find_key_in_children(geometry, from_c_string("type"));
+    if (geometry_type == NULL || geometry->type != JSON_STRING) {
+      ERROR_MSG("no geometry type suppiled")
+    }
+
+    JsonNode *const coordinates =
+        find_key_in_children(geometry, from_c_string("coordinates"));
+    if (coordinates == NULL || coordinates->type != JSON_ARRAY) {
+      ERROR_MSG("no coordinates suppiled")
+    }
+
+    // "type" : "Point" parsing
+    if (string8_equals(geometry_type->text_value, from_c_string("Point"))) {
+      PointArray_push(&parsed->points, serialize_point(coordinates));
+    }
+
+    // TODO:
+    if (string8_equals(geometry_type->text_value,
+                       from_c_string("MultiPoint"))) {
+    }
+    if (string8_equals(geometry_type->text_value,
+                       from_c_string("LineString"))) {
+    }
+    if (string8_equals(geometry_type->text_value,
+                       from_c_string("MultiLineString"))) {
+    }
+    if (string8_equals(geometry_type->text_value, from_c_string("Polygon"))) {
+    }
+    if (string8_equals(geometry_type->text_value,
+                       from_c_string("MultiPolygon"))) {
+    }
+
+    current_child = current_child->next;
+  }
+
+  return (Geo_Json *)0; // TODO:
+}
+
 Geo_Json *geo_json_parse(Arena *arena, char *filepath) {
   FILE *f = fopen(filepath, "r");
   if (f == NULL) {
-    exit(EXIT_FAILURE);
+    ERROR_MSG("could not open file")
   }
 
   Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
@@ -423,10 +559,10 @@ Geo_Json *geo_json_parse(Arena *arena, char *filepath) {
 
   JsonNode js = {0};
   parse_value(arena, &js, (string8){0}, buffer);
-  // serialize(arena, js);
+  Geo_Json *serialized = serialize(arena, &js);
 
   temp_arena_memory_end(scratch);
-  return (Geo_Json *){0}; // TODO:
+  return serialized;
 }
 
 void usage(char *program_name) {

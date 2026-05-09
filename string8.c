@@ -1,15 +1,21 @@
 #include <stddef.h>
+#include <string.h>
 typedef struct string8 string8;
 struct string8 {
   char *buf;
   size_t len;
 };
 
-string8 from_c_string(char *string, size_t len) {
+string8 from_c_string_len(char *string, size_t len) {
   return (string8){
       .buf = string,
       .len = len,
   };
+}
+
+string8 from_c_string(char *string) {
+  size_t len = strlen(string);
+  return from_c_string_len(string, len);
 }
 
 // returns -1 if a is earlier 0 if equal 1 if later
@@ -29,4 +35,8 @@ int string8_compare(string8 a, string8 b) {
     return -1;
   }
   return 0;
+}
+
+int string8_equals(string8 a, string8 b) {
+  return string8_compare(a, b) == 0;
 }
