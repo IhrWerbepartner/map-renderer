@@ -1,0 +1,33 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "line": "L Train",
+        "boroughs": ["Manhattan", "Brooklyn"],
+        "stations": [
+          "8 Av",
+          "6 Av",
+          "14 St-Union Sq",
+          "3 Av",
+          "1 Av",
+          "Bedford Av",
+          "Lorimer St"
+        ]
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-74.0025, 40.7397],
+          [-73.9962, 40.7373],
+          [-73.9903, 40.7346],
+          [-73.9867, 40.7328],
+          [-73.9816, 40.7309],
+          [-73.9568, 40.7173],
+          [-73.9499, 40.714]
+        ]
+      }
+    }
+  ]
+}

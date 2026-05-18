@@ -2,18 +2,18 @@
 #include <string.h>
 typedef struct string8 string8;
 struct string8 {
-  char *buf;
+  const char *buf;
   size_t len;
 };
 
-string8 from_c_string_len(char *string, size_t len) {
+string8 from_c_string_len(const char *string, size_t len) {
   return (string8){
       .buf = string,
       .len = len,
   };
 }
 
-string8 from_c_string(char *string) {
+string8 from_c_string(const char *string) {
   size_t len = strlen(string);
   return from_c_string_len(string, len);
 }
