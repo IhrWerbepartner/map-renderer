@@ -2,11 +2,11 @@
 
 #define DeclFixedArray(typename, type)                                         \
   typedef struct {                                                             \
-    U32 len, capacity;                                                      \
+    U32 len, capacity;                                                         \
     type *data;                                                                \
   } typename;                                                                  \
                                                                                \
-  typename typename##_new(Arena *arena, U32 capacity) {                     \
+  typename typename##_new(Arena *arena, U32 capacity) {                        \
     type *data = (type *)arena_alloc_align(arena, capacity * sizeof(type),     \
                                            _Alignof(type));                    \
     return (typename){.len = 0, .capacity = capacity, .data = data};           \

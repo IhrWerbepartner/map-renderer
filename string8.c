@@ -6,16 +6,16 @@ struct string8 {
   size_t len;
 };
 
-string8 from_c_string_len(const char *string, size_t len) {
+string8 string8_from_c_string_len(const char *string, size_t len) {
   return (string8){
       .buf = string,
       .len = len,
   };
 }
 
-string8 from_c_string(const char *string) {
+string8 string8_from_c_string(const char *string) {
   size_t len = strlen(string);
-  return from_c_string_len(string, len);
+  return string8_from_c_string_len(string, len);
 }
 
 // returns -1 if a is earlier 0 if equal 1 if later
