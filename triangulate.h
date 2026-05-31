@@ -9,8 +9,6 @@
 #include <time.h>
 
 /* Segment attributes */
-// TODO: change float back to double
-
 typedef struct {
   Coord2 v0, v1;   /* two endpoints */
   int is_inserted;  /* inserted in trapezoidation yet ? */
@@ -78,7 +76,7 @@ typedef struct {
 #define LASTPT 2
 
 #define TRIANG_INFINITY 1 << 30
-#define C_EPS 1.0e-7 /* tolerance value: Used for making */
+#define C_EPS 1.0e-15 /* tolerance value: Used for making */
                      /* all decisions about collinearity or */
                      /* left/right of segment. Decrease */
                      /* this value if the input points are */
@@ -223,10 +221,10 @@ static int inside_polygon(trap_t *t) {
 }
 
 /* return a new mon structure from the table */
-static int newmon() { return ++mon_idx; }
+static int newmon(void) { return ++mon_idx; }
 
 /* return a new chain element from the table */
-static int new_chain_element() { return ++chain_idx; }
+static int new_chain_element(void) { return ++chain_idx; }
 
 static F64 get_angle(Coord2 *vp0, Coord2 *vpnext, Coord2 *vp1) {
   Coord2 v0, v1;
@@ -400,10 +398,9 @@ static int monotonate_trapezoids(int n) {
 /* recursively visit all the trapezoids */
 static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   trap_t *t = &tr[trnum];
-  int howsplit, mnew;
-  int v0, v1, v0next, v1next;
-  int retval, tmp;
-  int do_switch = FALSE;
+  int mnew;
+  int v0, v1;
+  int retval = 0;
 
   if ((trnum <= 0) || visited[trnum])
     return 0;
@@ -425,7 +422,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
       v0 = tr[t->d1].lseg;
       v1 = t->lseg;
       if (from == t->d1) {
-        do_switch = TRUE;
         mnew = make_new_monotone_poly(mcur, v1, v0);
         traverse_polygon(mcur, t->d1, trnum, TR_FROM_UP);
         traverse_polygon(mnew, t->d0, trnum, TR_FROM_UP);
@@ -449,7 +445,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
       v0 = t->rseg;
       v1 = tr[t->u0].rseg;
       if (from == t->u1) {
-        do_switch = TRUE;
         mnew = make_new_monotone_poly(mcur, v1, v0);
         traverse_polygon(mcur, t->u1, trnum, TR_FROM_DN);
         traverse_polygon(mnew, t->u0, trnum, TR_FROM_DN);
@@ -475,7 +470,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
       retval = SP_2UP_2DN;
       if (((dir == TR_FROM_DN) && (t->d1 == from)) ||
           ((dir == TR_FROM_UP) && (t->u1 == from))) {
-        do_switch = TRUE;
         mnew = make_new_monotone_poly(mcur, v1, v0);
         traverse_polygon(mcur, t->u1, trnum, TR_FROM_DN);
         traverse_polygon(mcur, t->d1, trnum, TR_FROM_UP);
@@ -496,7 +490,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
 
         retval = SP_2UP_LEFT;
         if ((dir == TR_FROM_UP) && (t->u0 == from)) {
-          do_switch = TRUE;
           mnew = make_new_monotone_poly(mcur, v1, v0);
           traverse_polygon(mcur, t->u0, trnum, TR_FROM_DN);
           traverse_polygon(mnew, t->d0, trnum, TR_FROM_UP);
@@ -514,7 +507,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
         v1 = tr[t->u0].rseg;
         retval = SP_2UP_RIGHT;
         if ((dir == TR_FROM_UP) && (t->u1 == from)) {
-          do_switch = TRUE;
           mnew = make_new_monotone_poly(mcur, v1, v0);
           traverse_polygon(mcur, t->u1, trnum, TR_FROM_DN);
           traverse_polygon(mnew, t->d1, trnum, TR_FROM_UP);
@@ -538,7 +530,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
         v1 = t->lseg;
         retval = SP_2DN_LEFT;
         if (!((dir == TR_FROM_DN) && (t->d0 == from))) {
-          do_switch = TRUE;
           mnew = make_new_monotone_poly(mcur, v1, v0);
           traverse_polygon(mcur, t->u1, trnum, TR_FROM_DN);
           traverse_polygon(mcur, t->d1, trnum, TR_FROM_UP);
@@ -557,7 +548,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
 
         retval = SP_2DN_RIGHT;
         if ((dir == TR_FROM_DN) && (t->d1 == from)) {
-          do_switch = TRUE;
           mnew = make_new_monotone_poly(mcur, v1, v0);
           traverse_polygon(mcur, t->d1, trnum, TR_FROM_UP);
           traverse_polygon(mnew, t->u1, trnum, TR_FROM_DN);
@@ -579,7 +569,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
         v1 = t->lseg;
         retval = SP_SIMPLE_LRDN;
         if (dir == TR_FROM_UP) {
-          do_switch = TRUE;
           mnew = make_new_monotone_poly(mcur, v1, v0);
           traverse_polygon(mcur, t->u0, trnum, TR_FROM_DN);
           traverse_polygon(mcur, t->u1, trnum, TR_FROM_DN);
@@ -599,7 +588,6 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
 
         retval = SP_SIMPLE_LRUP;
         if (dir == TR_FROM_UP) {
-          do_switch = TRUE;
           mnew = make_new_monotone_poly(mcur, v1, v0);
           traverse_polygon(mcur, t->u0, trnum, TR_FROM_DN);
           traverse_polygon(mcur, t->u1, trnum, TR_FROM_DN);
@@ -785,7 +773,7 @@ static int q_idx;
 static int tr_idx;
 
 /* Return a new node to be added into the query tree */
-static int newnode() {
+static int newnode(void) {
   if (q_idx < QSIZE)
     return q_idx++;
   else {
@@ -795,7 +783,7 @@ static int newnode() {
 }
 
 /* Return a free trapezoid */
-static int newtrap() {
+static int newtrap(void) {
   if (tr_idx < TRSIZE) {
     tr[tr_idx].lseg = -1;
     tr[tr_idx].rseg = -1;
@@ -1071,12 +1059,11 @@ static int merge_trapezoids(int segnum, int tfirst, int tlast, int side) {
 
 static int add_segment(int segnum) {
   segment_t s;
-  segment_t *so = &seg[segnum];
-  int tu, tl, sk, tfirst, tlast, tnext;
+  int tu, tl, sk, tfirst, tlast;
   int tfirstr, tlastr, tfirstl, tlastl;
-  int i1, i2, t, t1, t2, tn;
+  int i1, i2, t, tn;
   Coord2 tpt;
-  int tritop = 0, tribot = 0, is_swapped = 0;
+  int tribot = 0, is_swapped = 0;
   int tmptriseg;
 
   s = seg[segnum];
@@ -1145,7 +1132,6 @@ static int add_segment(int segnum) {
   } else /* v0 already present */
   {      /* Get the topmost intersecting trapezoid */
     tfirst = locate_endpoint(&s.v0, &s.v1, s.root0);
-    tritop = 1;
   }
 
   if ((is_swapped) ? !inserted(segnum, FIRSTPT)
@@ -1398,7 +1384,7 @@ static int add_segment(int segnum) {
       if (FP_EQUAL(tr[t].lo.y, tr[tlast].lo.y) &&
           FP_EQUAL(tr[t].lo.x, tr[tlast].lo.x) &&
           tribot) { /* bottom forms a triangle */
-        int tmpseg;
+        int tmpseg = 0;
 
         if (is_swapped)
           tmptriseg = seg[segnum].prev;
@@ -1436,7 +1422,6 @@ static int add_segment(int segnum) {
     /* this segment and proceed down that one */
 
     else {
-      int tmpseg = tr[tr[t].d0].rseg;
       F64 y0, yt;
       Coord2 tmppt;
       int tnext, i_d0, i_d1;
@@ -1621,8 +1606,7 @@ static int generate_random_ordering(int n) {
 
 /* Return the next segment in the generated random ordering of all the */
 /* segments in S */
-static int choose_segment() {
-  int i;
+static int choose_segment(void) {
 
 #ifdef DEBUG
   fprintf(stderr, "choose_segment: %d\n", permute[choose_idx]);
@@ -1715,7 +1699,7 @@ static int initialise(int n) {
 int triangulate_polygon(int ncontours, int cntr[], Coord2(*vertices),
                         TriangleArray *triangles) {
   int i;
-  int nmonpoly, ccount, npoints, genus;
+  int nmonpoly, ccount, npoints;
   int n;
 
   memset((void *)seg, 0, sizeof(seg));
@@ -1753,7 +1737,6 @@ int triangulate_polygon(int ncontours, int cntr[], Coord2(*vertices),
     ccount++;
   }
 
-  genus = ncontours - 1;
   n = i - 1;
 
   initialise(n);

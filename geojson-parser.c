@@ -1,4 +1,5 @@
 #include "base.h"
+#include "string8.c"
 #include "raymath.h"
 #include "triangulate.h"
 #include <assert.h>
@@ -13,7 +14,80 @@
 #include <sys/types.h>
 #include <time.h>
 
-void init_all_arrays(Arena *arena, Geo_Json *base, S32 capacity) {
+typedef struct geo_properties {
+  String8 key;
+  void *val;
+} GeoProperties;
+
+typedef struct Point {
+  Coord2 coordinates;
+} Point;
+
+typedef struct multi_point {
+  Slice coordinates;
+} MultiPoint;
+
+typedef struct line_string {
+  Slice coordinates;
+} LineString;
+
+DeclFixedArray(LineStringArray, LineString)
+
+    typedef struct multi_line_string {
+  Slice coordinates;
+} MultiLineString;
+
+typedef struct contour {
+  Slice coords;
+} Contour;
+
+typedef struct polygon {
+  U32 outside_coordinates;
+  Slice inside_coordinates;
+} Polygon;
+
+DeclFixedArray(PolygonArray, Polygon)
+
+    typedef struct multi_polygon {
+  Slice polygons;
+} MultiPolygon;
+
+DeclFixedArray(PointArray, Point) DeclFixedArray(MultiPointArray, MultiPoint)
+    DeclFixedArray(MultiLineStringArray, MultiLineString)
+        DeclFixedArray(GeoPropertiesArray, GeoProperties)
+            DeclFixedArray(MultiPolygonArray, MultiPolygon)
+
+                typedef struct geo_json {
+  enum geo_json_type {
+    FEATURE_COLLECTION,
+  } type;
+
+  // SoA layout
+  PointArray interest_points; // all interest points
+                              //
+  Coord2Array multi_point_coords;
+  MultiPointArray multi_points; // has a slice into coords
+
+  Coord2Array line_string_coords;
+  LineStringArray line_strings; // has a slice into coords
+
+  Coord2Array multi_line_string_coords;
+  LineStringArray multi_line_string_array; // has a slice into coords
+  MultiLineStringArray multi_line_strings; // has an array of lineStrings
+
+  Coord2Array polygon_coords;
+  TriangleArray polygon_triangles; // triangle indices point into polygon_coords
+
+  Coord2Array multi_polygon_coords;
+  TriangleArray multi_polygon_triangles; // has a slice into coords
+  MultiPolygonArray
+      multi_polygons; // has an array of slices into array of triangles
+
+  GeoPropertiesArray properties; // TODO: add a handle in the types for as an
+                                 // index in to the properties array
+} GeoJson;
+
+void init_all_arrays(Arena *arena, GeoJson *base, S32 capacity) {
   base->interest_points = PointArrayNew(arena, capacity);
 
   base->multi_point_coords = Coord2ArrayNew(
@@ -51,9 +125,9 @@ typedef enum JsonType {
 
 typedef struct JsonNode {
   JsonType type; // type of json node, see above
-  string8 key;   // key of the property; for object's children only
+  String8 key;   // key of the property; for object's children only
   union {
-    string8 text_value; // text value of STRING node
+    String8 text_value; // text value of STRING node
     struct {
       union {
         U64 u_value; // the value of INTEGER or BOOL node
@@ -80,7 +154,7 @@ Arena *arenas[2] = {&a1, &a2};
 
 #define IS_WHITESPACE(c) ((unsigned char)(c) <= (unsigned char)' ')
 
-static JsonNode *create_json(Arena *arena, JsonType type, string8 key,
+static JsonNode *create_json(Arena *arena, JsonType type, String8 key,
                              JsonNode *parent) {
   JsonNode *js = arena_alloc(arena, sizeof(JsonNode));
   assert(js);
@@ -97,17 +171,7 @@ static JsonNode *create_json(Arena *arena, JsonType type, string8 key,
   return js;
 }
 
-static inline int hex_val(char c) {
-  if (c >= '0' && c <= '9')
-    return c - '0';
-  if (c >= 'a' && c <= 'f')
-    return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F')
-    return c - 'A' + 10;
-  return -1;
-}
-
-static string8 unescape_string(char *s, char **end) {
+static String8 unescape_string(char *s, char **end) {
   char *p = s;
   char *d = s;
   char c;
@@ -115,7 +179,7 @@ static string8 unescape_string(char *s, char **end) {
     if (c == '"') {
       *d = '\0';
       *end = p;
-      return string8_from_c_string_len(s, (size_t)(p - s) - 1);
+      return String8FromCStringLen(s, (size_t)(p - s) - 1);
     } else if (c == '\\') {
       switch (*p) {
       case '\\':
@@ -156,7 +220,7 @@ static string8 unescape_string(char *s, char **end) {
     }
   }
   JSON_REPORT_ERROR("no closing quote for string", s);
-  return (string8){0};
+  return (String8){0};
 }
 
 static char *skip_block_comment(char *p) {
@@ -177,7 +241,7 @@ REPEAT:
   return p + 1;
 }
 
-static char *parse_key(string8 *key, char *p) {
+static char *parse_key(String8 *key, char *p) {
   // on '}' return with *p=='}'
   char c;
   while ((c = *p++)) {
@@ -221,7 +285,7 @@ static char *parse_key(string8 *key, char *p) {
   return 0; // error
 }
 
-static char *parse_value(Arena *arena, JsonNode *parent, string8 key, char *p) {
+static char *parse_value(Arena *arena, JsonNode *parent, String8 key, char *p) {
   JsonNode *js;
   while (1) {
     switch (*p) {
@@ -240,7 +304,7 @@ static char *parse_value(Arena *arena, JsonNode *parent, string8 key, char *p) {
       js = create_json(arena, JSON_OBJECT, key, parent);
       p++;
       while (1) {
-        string8 new_key = {0};
+        String8 new_key = {0};
         p = parse_key(&new_key, p);
         if (!p)
           return 0; // error
@@ -254,7 +318,7 @@ static char *parse_value(Arena *arena, JsonNode *parent, string8 key, char *p) {
       js = create_json(arena, JSON_ARRAY, key, parent);
       p++;
       while (1) {
-        p = parse_value(arena, js, (string8){0}, p);
+        p = parse_value(arena, js, (String8){0}, p);
         if (!p)
           return 0; // error
         if (*p == ']')
@@ -355,7 +419,7 @@ static char *parse_value(Arena *arena, JsonNode *parent, string8 key, char *p) {
   }
 }
 
-const JsonNode *json_get(const JsonNode *json, string8 key) {
+const JsonNode *json_get(const JsonNode *json, String8 key) {
   JsonNode *js;
   for (js = json->children.first; js; js = js->next) {
     if (js->key.buf && !string8_compare(js->key, key))
@@ -378,13 +442,13 @@ const JsonNode *json_item(const JsonNode *json, int idx) {
 //
 
 // locates a child node with given key, value pair
-JsonNode *find_key_value_in_children(JsonNode *node, string8 key,
-                                     string8 value) {
+JsonNode *find_key_value_in_children(JsonNode *node, String8 key,
+                                     String8 value) {
   JsonNode *current = node->children.first;
   while (current != NULL) {
     if (current->type == JSON_STRING) {
-      if (string8_equals(current->key, key) &&
-          string8_equals(current->text_value, value)) {
+      if (String8Equals(current->key, key) &&
+          String8Equals(current->text_value, value)) {
         return current;
       }
     }
@@ -394,10 +458,10 @@ JsonNode *find_key_value_in_children(JsonNode *node, string8 key,
 }
 
 // locates a child node with given key
-JsonNode *find_key_in_children(JsonNode *node, string8 key) {
+JsonNode *find_key_in_children(JsonNode *node, String8 key) {
   JsonNode *current = node->children.first;
   while (current != NULL) {
-    if (string8_equals(current->key, key)) {
+    if (String8Equals(current->key, key)) {
       return current;
     }
     current = current->next;
@@ -450,8 +514,8 @@ void Coord2ArrayFromJsonArray(JsonNode *coordinates,
   }
 }
 
-Geo_Json *serialize(Arena *arena, JsonNode *root) {
-  Geo_Json *parsed = (Geo_Json *)arena_alloc(arena, sizeof(Geo_Json));
+GeoJson *serialize(Arena *arena, JsonNode *root) {
+  GeoJson *parsed = (GeoJson *)arena_alloc(arena, sizeof(GeoJson));
   if (root->type != JSON_NULL || root->children.length != 1) {
     ERROR_MSG("invalid json")
   }
@@ -460,13 +524,13 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
     ERROR_MSG("invalid object")
   }
   JsonNode *const featureCollcetionType =
-      find_key_value_in_children(root, string8_from_c_string("type"),
-                                 string8_from_c_string("FeatureCollection"));
+      find_key_value_in_children(root, String8FromCString("type"),
+                                 String8FromCString("FeatureCollection"));
   if (featureCollcetionType == NULL) {
     ERROR_MSG("invalid geojson type")
   }
   JsonNode *const features =
-      find_key_in_children(root, string8_from_c_string("features"));
+      find_key_in_children(root, String8FromCString("features"));
   if (features == NULL || features->type != JSON_ARRAY) {
     ERROR_MSG("invalid geojson features")
   }
@@ -478,40 +542,40 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
   Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
   while (current_child != NULL) {
     JsonNode *const feature_type =
-        find_key_value_in_children(current_child, string8_from_c_string("type"),
-                                   string8_from_c_string("Feature"));
+        find_key_value_in_children(current_child, String8FromCString("type"),
+                                   String8FromCString("Feature"));
     if (feature_type == NULL) {
       ERROR_MSG("invalid feature type")
     }
 
     JsonNode *const geometry =
-        find_key_in_children(current_child, string8_from_c_string("geometry"));
+        find_key_in_children(current_child, String8FromCString("geometry"));
     if (geometry == NULL || geometry->type != JSON_OBJECT) {
       ERROR_MSG("invalid or no geometry suppiled")
     }
 
     JsonNode *const geometry_type =
-        find_key_in_children(geometry, string8_from_c_string("type"));
+        find_key_in_children(geometry, String8FromCString("type"));
     if (geometry_type == NULL || geometry_type->type != JSON_STRING) {
       ERROR_MSG("no geometry type suppiled")
     }
 
     JsonNode *const coordinates =
-        find_key_in_children(geometry, string8_from_c_string("coordinates"));
+        find_key_in_children(geometry, String8FromCString("coordinates"));
     if (coordinates == NULL || coordinates->type != JSON_ARRAY) {
       ERROR_MSG("no coordinates suppiled")
     }
 
     // "type" : "Point" parsing
-    if (string8_equals(geometry_type->text_value,
-                       string8_from_c_string("Point"))) {
+    if (String8Equals(geometry_type->text_value,
+                       String8FromCString("Point"))) {
       PointArrayPush(
           &parsed->interest_points,
           (Point){.coordinates = Coord2FromJsonArrayNode(coordinates)});
     }
 
-    if (string8_equals(geometry_type->text_value,
-                       string8_from_c_string("MultiPoint"))) {
+    if (String8Equals(geometry_type->text_value,
+                       String8FromCString("MultiPoint"))) {
       MultiPoint multi_point = (MultiPoint){
           .coordinates = (Slice){.start = parsed->multi_points.len,
                                  .length = coordinates->children.length},
@@ -523,8 +587,8 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
       MultiPointArrayPush(&parsed->multi_points, multi_point);
     }
 
-    if (string8_equals(geometry_type->text_value,
-                       string8_from_c_string("LineString"))) {
+    if (String8Equals(geometry_type->text_value,
+                       String8FromCString("LineString"))) {
       LineString line_string = (LineString){
           .coordinates = (Slice){.start = parsed->line_string_coords.len,
                                  .length = coordinates->children.length},
@@ -536,8 +600,8 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
       LineStringArrayPush(&parsed->line_strings, line_string);
     }
 
-    if (string8_equals(geometry_type->text_value,
-                       string8_from_c_string("MultiLineString"))) {
+    if (String8Equals(geometry_type->text_value,
+                       String8FromCString("MultiLineString"))) {
       JsonNode *line_string = coordinates->children.first;
       MultiLineString mls = (MultiLineString){
           .coordinates = (Slice){.start = parsed->multi_line_string_array.len,
@@ -560,11 +624,11 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
       MultiLineStringArrayPush(&parsed->multi_line_strings, mls);
     }
 
-    if (string8_equals(geometry_type->text_value,
-                       string8_from_c_string("Polygon"))) {
+    if (String8Equals(geometry_type->text_value,
+                       String8FromCString("Polygon"))) {
       S32 contour_count = coordinates->children.length;
-      S32 *contour_sizes =
-          (S32 *)arena_alloc(scratch.arena, contour_count * (S32)sizeof(S32));
+      S32 *contour_sizes = (S32 *)arena_alloc(
+          scratch.arena, (size_t)contour_count * sizeof(S32));
       Coord2 *vertices =
           &parsed->polygon_coords.data[parsed->polygon_coords.len];
       S32 first_coordinate_idx = parsed->polygon_coords.len;
@@ -606,16 +670,16 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
       }
     }
 
-    if (string8_equals(geometry_type->text_value,
-                       string8_from_c_string("MultiPolygon"))) {
+    if (String8Equals(geometry_type->text_value,
+                       String8FromCString("MultiPolygon"))) {
       JsonNode *polygon = coordinates->children.first;
       ASSERT(polygon->type == JSON_ARRAY,
              "expected array for MultiPolygon coordinates\n")
 
       while (polygon != NULL) {
         S32 contour_count = polygon->children.length;
-        S32 *contour_sizes =
-            (S32 *)arena_alloc(scratch.arena, contour_count * (S32)sizeof(S32));
+        S32 *contour_sizes = (S32 *)arena_alloc(
+            scratch.arena, (size_t)contour_count * (S32)sizeof(S32));
         Coord2 *vertices = &parsed->multi_polygon_coords
                                 .data[parsed->multi_polygon_coords.len];
         S32 first_coordinate_idx = parsed->multi_polygon_coords.len;
@@ -669,7 +733,7 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
   return parsed;
 }
 
-Geo_Json *geo_json_parse(Arena *arena, char *filepath) {
+GeoJson *geo_json_parse(Arena *arena, char *filepath) {
   FILE *f = fopen(filepath, "r");
   if (f == NULL) {
     ERROR_MSG("could not open file: %s", filepath)
@@ -685,14 +749,14 @@ Geo_Json *geo_json_parse(Arena *arena, char *filepath) {
   fclose(f);
 
   JsonNode js = {0};
-  parse_value(arena, &js, (string8){0}, buffer);
-  Geo_Json *serialized = serialize(arena, &js);
+  parse_value(arena, &js, (String8){0}, buffer);
+  GeoJson *serialized = serialize(arena, &js);
 
   temp_arena_memory_end(scratch);
   return serialized;
 }
 
-void draw_points(Geo_Json *coords, Camera2D camera) {
+void draw_points(GeoJson *coords, Camera2D camera) {
   // --------------------- POINTS -------------------
   PointArray ips = coords->interest_points;
   for (S32 i = 0; i < ips.len; i++) {
@@ -701,7 +765,7 @@ void draw_points(Geo_Json *coords, Camera2D camera) {
     DrawCircleV(a, 5.0f, RED);
   }
 }
-void draw_multi_points(Geo_Json *coords, Camera2D camera) {
+void draw_multi_points(GeoJson *coords, Camera2D camera) {
   // --------------------- MULTI-POINTS -------------------
   MultiPointArray points = coords->multi_points;
   Coord2Array m_coords = coords->multi_point_coords;
@@ -716,7 +780,7 @@ void draw_multi_points(Geo_Json *coords, Camera2D camera) {
     }
   }
 }
-void draw_line_strings(Geo_Json *coords, Camera2D camera,
+void draw_line_strings(GeoJson *coords, Camera2D camera,
                        int show_node_endpoints) {
   // --------------------- LINE-STRINGS -------------------
   LineStringArray lines = coords->line_strings;
@@ -740,11 +804,11 @@ void draw_line_strings(Geo_Json *coords, Camera2D camera,
     }
   }
 }
-void draw_multi_line_strings(Geo_Json *_coords, Camera2D _camera) {
+void draw_multi_line_strings(GeoJson *_coords, Camera2D _camera) {
   // -------------------- MUTLI LINE STRINGS -----------------------
 }
 
-void draw_polygons(Geo_Json *coords, Camera2D camera) {
+void draw_polygons(GeoJson *coords, Camera2D camera) {
   // --------------------- POLYGONS ---------------------
   TriangleArray triangles = coords->polygon_triangles;
   Coord2Array p_coords = coords->polygon_coords;
@@ -767,7 +831,7 @@ void draw_polygons(Geo_Json *coords, Camera2D camera) {
   }
 }
 
-void draw_multi_polygons(Geo_Json *coords, Camera2D camera) {
+void draw_multi_polygons(GeoJson *coords, Camera2D camera) {
   // --------------------- MUTLI POLYGONS ---------------------
   TriangleArray triangles = coords->multi_polygon_triangles;
   Coord2Array p_coords = coords->multi_polygon_coords;
@@ -808,7 +872,7 @@ int main(int argc, char **argv) {
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   arena_init(arenas[1], backing_buffer, backing_buffer_size);
   Arena *arena = GetScratch().arena;
-  Geo_Json *serialized_coords = geo_json_parse(arena, argv[1]);
+  GeoJson *serialized_coords = geo_json_parse(arena, argv[1]);
 
   //--------------------------------------------------------------------------------------
   // Initialization

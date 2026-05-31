@@ -1,5 +1,7 @@
 #pragma once
 
+#include "arena.c"
+
 #define DeclFixedArray(typename, type)                                         \
   typedef struct {                                                             \
     S32 len, capacity;                                                         \
