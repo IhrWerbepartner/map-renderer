@@ -1,11 +1,11 @@
 #pragma once
 #include "fixed-array.c"
-#include "string8.c"
 #include <raylib.h>
 
 #include "arena.c"
 #include <stdint.h>
 #include <stdio.h>
+
 #define DEBUG_MSG(...) fprintf(stderr, __VA_ARGS__);
 
 #define ERROR_MSG(...)                                                         \
