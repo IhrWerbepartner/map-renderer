@@ -12,7 +12,7 @@ run: $(EXE_NAME)
 	./$(EXE_NAME) $(GEO_FILE)
 
 map-renderer: geojson-parser.c triangulate.h arena.c base.h
-	gcc -DDEBUG $(CFLAGS) $(executable) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME) -O3
+	gcc $(CFLAGS) $(executable) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME) -O3
 
 unoptimized: geojson-parser.c triangulate.h arena.c base.h
 	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME_UNOPTIMIZED)

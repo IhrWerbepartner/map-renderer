@@ -1,16 +1,22 @@
 #pragma once
 #include "fixed-array.c"
-#include <raylib.h>
 #include "string8.c"
+#include <raylib.h>
 
 #include "arena.c"
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
 #define DEBUG_MSG(...) fprintf(stderr, __VA_ARGS__);
 
 #define ERROR_MSG(...)                                                         \
   fprintf(stderr, __VA_ARGS__);                                                \
   exit(EXIT_FAILURE);
+
+#define ASSERT(expr, ...)                                                      \
+  if (!(expr)) {                                                                 \
+    fprintf(stderr, __VA_ARGS__);                                              \
+    exit(EXIT_FAILURE);                                                        \
+  }
 
 typedef uint8_t U8;
 typedef uint16_t U16;
@@ -27,15 +33,23 @@ typedef S64 B64;
 typedef float F32;
 typedef double F64;
 
-typedef struct {
+
+typedef struct coord2 {
+  F64 x, y;
+} Coord2;
+
+#define Vector2FromCoord2(coord) (Vector2) {.x = (F32) (coord).x, .y = (F32) (coord).y}
+
+typedef struct triangle {
   S32 a, b, c;
 } Triangle;
 
 typedef struct slice {
-  U32 start;
-  U32 length;
+  S32 start;
+  S32 length;
 } Slice; // index into the point2DArray
 
+DeclFixedArray(Coord2Array, Coord2)
 DeclFixedArray(Vector2Array, Vector2)
 
     typedef struct geo_properties {
@@ -44,8 +58,9 @@ DeclFixedArray(Vector2Array, Vector2)
 } GeoProperties;
 
 typedef struct Point {
-  Vector2 coordinates;
+  Coord2 coordinates;
 } Point;
+
 
 typedef struct multi_point {
   Slice coordinates;
@@ -58,7 +73,7 @@ typedef struct line_string {
 DeclFixedArray(LineStringArray, LineString)
 
     typedef struct multi_line_string {
-  LineStringArray coordinates;
+  Slice coordinates;
 } MultiLineString;
 
 typedef struct contour {
@@ -67,7 +82,7 @@ typedef struct contour {
 
 DeclFixedArray(TriangleArray, Triangle)
 
-typedef struct polygon {
+    typedef struct polygon {
   U32 outside_coordinates;
   Slice inside_coordinates;
 } Polygon;
@@ -91,25 +106,24 @@ DeclFixedArray(PointArray, Point) DeclFixedArray(MultiPointArray, MultiPoint)
   // SoA layout
   PointArray interest_points; // all interest points
                               //
-  Vector2Array multi_point_coords;
+  Coord2Array multi_point_coords;
   MultiPointArray multi_points; // has a slice into coords
 
-  Vector2Array line_string_coords;
+  Coord2Array line_string_coords;
   LineStringArray line_strings; // has a slice into coords
 
-  Vector2Array multi_line_string_coords;
+  Coord2Array multi_line_string_coords;
   LineStringArray multi_line_string_array; // has a slice into coords
   MultiLineStringArray
       multi_line_strings; // has an array of lineStrings
-                          // TODO: split polygons into triagnles as we need
-                          // concave ones(?)
-  Vector2Array polygon_coords;
-  TriangleArray triangulated_polygons; // triangle indices point into polygon_coords
 
-  Vector2Array multi_polygon_coords;
-  PolygonArray multi_polygon_array; // has a slice into coords
+  Coord2Array polygon_coords;
+  TriangleArray polygon_triangles; // triangle indices point into polygon_coords
+
+  Coord2Array multi_polygon_coords;
+  TriangleArray multi_polygon_triangles; // has a slice into coords
   MultiPolygonArray
-      multi_polygons; // has an array of lices into array of polygons
+      multi_polygons; // has an array of slices into array of triangles
 
   GeoPropertiesArray properties; // TODO: add a handle in the types for as an
                                  // index in to the properties array

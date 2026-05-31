@@ -2,7 +2,6 @@
 
 #include "base.h"
 #include <math.h>
-#include <raylib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,9 +9,10 @@
 #include <time.h>
 
 /* Segment attributes */
+// TODO: change float back to double
 
 typedef struct {
-  Vector2 v0, v1;   /* two endpoints */
+  Coord2 v0, v1;   /* two endpoints */
   int is_inserted;  /* inserted in trapezoidation yet ? */
   int root0, root1; /* root nodes in Q */
   int next;         /* Next logical segment */
@@ -23,7 +23,7 @@ typedef struct {
 
 typedef struct {
   int lseg, rseg; /* two adjoining segments */
-  Vector2 hi, lo; /* max/min y-values */
+  Coord2 hi, lo; /* max/min y-values */
   int u0, u1;
   int d0, d1;
   int sink;         /* pointer to corresponding in Q */
@@ -36,7 +36,7 @@ typedef struct {
 typedef struct {
   int nodetype; /* Y-node or S-node */
   int segnum;
-  Vector2 yval;
+  Coord2 yval;
   int trnum;
   int parent;      /* doubly linked DAG */
   int left, right; /* children */
@@ -50,7 +50,7 @@ typedef struct {
 } monchain_t;
 
 typedef struct {
-  Vector2 pt;
+  Coord2 pt;
   int vnext[4]; /* next vertices for the 4 chains */
   int vpos[4];  /* position of v in the 4 chains */
   int nextfree;
@@ -62,7 +62,7 @@ typedef struct {
 #define T_Y 2
 #define T_SINK 3
 
-#define SEGSIZE 200 /* max# of segments. Determines how */
+#define SEGSIZE 5000 /* max# of segments. Determines how */
                     /* many points can be specified as */
                     /* input. If your datasets have large */
                     /* number of points, increase this */
@@ -118,9 +118,9 @@ typedef struct {
 
 /* Global variables */
 
-extern node_t qs[QSIZE];       /* Query structure */
-extern trap_t tr[TRSIZE];      /* Trapezoid structure */
-extern segment_t seg[SEGSIZE]; /* Segment table */
+static node_t qs[QSIZE];       /* Query structure */
+static trap_t tr[TRSIZE];      /* Trapezoid structure */
+static segment_t seg[SEGSIZE]; /* Segment table */
 
 #define CROSS_SINE(v0, v1) ((v0).x * (v1).y - (v1).x * (v0).y)
 #define LENGTH(v0) (sqrt((v0).x * (v0).x + (v0).y * (v0).y))
@@ -145,7 +145,7 @@ static int triangulate_single_polygon(int, int, int, TriangleArray *);
 static int traverse_polygon(int, int, int, int);
 
 /* Return the maximum of the two points into the yval structure */
-static int _max(Vector2 *yval, Vector2 *v0, Vector2 *v1) {
+static int _max(Coord2 *yval, Coord2 *v0, Coord2 *v1) {
   if (v0->y > v1->y + C_EPS)
     *yval = *v0;
   else if (FP_EQUAL(v0->y, v1->y)) {
@@ -160,7 +160,7 @@ static int _max(Vector2 *yval, Vector2 *v0, Vector2 *v1) {
 }
 
 /* Return the minimum of the two points into the yval structure */
-static int _min(Vector2 *yval, Vector2 *v0, Vector2 *v1) {
+static int _min(Coord2 *yval, Coord2 *v0, Coord2 *v1) {
   if (v0->y < v1->y - C_EPS)
     *yval = *v0;
   else if (FP_EQUAL(v0->y, v1->y)) {
@@ -174,7 +174,7 @@ static int _min(Vector2 *yval, Vector2 *v0, Vector2 *v1) {
   return 0;
 }
 
-int _greater_than(Vector2 *v0, Vector2 *v1) {
+static int _greater_than(Coord2 *v0, Coord2 *v1) {
   if (v0->y > v1->y + C_EPS)
     return TRUE;
   else if (v0->y < v1->y - C_EPS)
@@ -183,11 +183,11 @@ int _greater_than(Vector2 *v0, Vector2 *v1) {
     return (v0->x > v1->x);
 }
 
-int _equal_to(Vector2 *v0, Vector2 *v1) {
+static int _equal_to(Coord2 *v0, Coord2 *v1) {
   return (FP_EQUAL(v0->y, v1->y) && FP_EQUAL(v0->x, v1->x));
 }
 
-int _greater_than_equal_to(Vector2 *v0, Vector2 *v1) {
+static int _greater_than_equal_to(Coord2 *v0, Coord2 *v1) {
   if (v0->y > v1->y + C_EPS)
     return TRUE;
   else if (v0->y < v1->y - C_EPS)
@@ -196,7 +196,7 @@ int _greater_than_equal_to(Vector2 *v0, Vector2 *v1) {
     return (v0->x >= v1->x);
 }
 
-int _less_than(Vector2 *v0, Vector2 *v1) {
+static int _less_than(Coord2 *v0, Coord2 *v1) {
   if (v0->y < v1->y - C_EPS)
     return TRUE;
   else if (v0->y > v1->y + C_EPS)
@@ -228,8 +228,8 @@ static int newmon() { return ++mon_idx; }
 /* return a new chain element from the table */
 static int new_chain_element() { return ++chain_idx; }
 
-static float get_angle(Vector2 *vp0, Vector2 *vpnext, Vector2 *vp1) {
-  Vector2 v0, v1;
+static F64 get_angle(Coord2 *vp0, Coord2 *vpnext, Coord2 *vp1) {
+  Coord2 v0, v1;
 
   v0.x = vpnext->x - vp0->x;
   v0.y = vpnext->y - vp0->y;
@@ -248,7 +248,7 @@ static float get_angle(Vector2 *vp0, Vector2 *vpnext, Vector2 *vp1) {
 static int get_vertex_positions(int v0, int v1, int *ip, int *iq) {
   vertexchain_t *vp0, *vp1;
   int i;
-  float angle, temp;
+  F64 angle, temp;
   int tp, tq;
 
   vp0 = &vert[v0];
@@ -353,7 +353,7 @@ static int make_new_monotone_poly(int mcur, int v0, int v1) {
  * the polygon.
  */
 
-int monotonate_trapezoids(int n) {
+static int monotonate_trapezoids(int n) {
   int i;
   int tr_start;
 
@@ -631,9 +631,9 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
 /* triangulation. */
 /* Take care not to triangulate duplicate monotone polygons */
 
-void triangulate_monotone_polygons(int nvert, int nmonpoly, TriangleArray *op) {
+static void triangulate_monotone_polygons(int nvert, int nmonpoly, TriangleArray *op) {
   int i;
-  Vector2 ymax, ymin;
+  Coord2 ymax, ymin;
   int p, vfirst, posmax, posmin, v;
   int vcount, processed;
 
@@ -683,7 +683,7 @@ void triangulate_monotone_polygons(int nvert, int nmonpoly, TriangleArray *op) {
 
     if (vcount == 3) /* already a triangle */
     {
-      TriangleArray_push(op, (Triangle){
+      TriangleArrayPush(op, (Triangle){
                                  mchain[p].vnum,
                                  mchain[mchain[p].next].vnum,
                                  mchain[mchain[p].prev].vnum,
@@ -701,8 +701,10 @@ void triangulate_monotone_polygons(int nvert, int nmonpoly, TriangleArray *op) {
 
   
 #ifdef DEBUG
-  for (i = 0; i < TriangleArray_length(op); i++)
-    fprintf(stderr, "tri #%d: (%d, %d, %d)\n", i, op->data[i].a, op->data[i].b, op->data[i].c);
+  {
+  for (size_t i = 0; i < TriangleArrayLength(op); i++)
+    fprintf(stderr, "tri #%ld: (%d, %d, %d)\n", i, op->data[i].a, op->data[i].b, op->data[i].c);
+  }
 #endif
 }
 
@@ -747,7 +749,7 @@ static int triangulate_single_polygon(int nvert, int posmax, int side,
     {
       if (CROSS(vert[v].pt, vert[rc[ri - 1]].pt, vert[rc[ri]].pt) >
           0) { /* convex corner: cut if off */
-        TriangleArray_push(op, (Triangle){
+        TriangleArrayPush(op, (Triangle){
                                    rc[ri - 1],
                                    rc[ri],
                                    v,
@@ -769,7 +771,7 @@ static int triangulate_single_polygon(int nvert, int posmax, int side,
   } /* end-while */
 
   /* reached the bottom vertex. Add in the triangle formed */
-  TriangleArray_push(op, (Triangle){
+  TriangleArrayPush(op, (Triangle){
                              rc[ri - 1],
                              rc[ri],
                              v,
@@ -778,10 +780,6 @@ static int triangulate_single_polygon(int nvert, int posmax, int side,
 
   return 0;
 }
-
-node_t qs[QSIZE];       /* Query structure */
-trap_t tr[TRSIZE];      /* Trapezoid structure */
-segment_t seg[SEGSIZE]; /* Segment table */
 
 static int q_idx;
 static int tr_idx;
@@ -869,10 +867,10 @@ static int init_query_structure(int segnum) {
 
   tr[t1].hi = tr[t2].hi = tr[t4].lo = qs[i1].yval;
   tr[t1].lo = tr[t2].lo = tr[t3].hi = qs[i3].yval;
-  tr[t4].hi.y = (float)(TRIANG_INFINITY);
-  tr[t4].hi.x = (float)(TRIANG_INFINITY);
-  tr[t3].lo.y = (float)-1 * (TRIANG_INFINITY);
-  tr[t3].lo.x = (float)-1 * (TRIANG_INFINITY);
+  tr[t4].hi.y = (F64)(TRIANG_INFINITY);
+  tr[t4].hi.x = (F64)(TRIANG_INFINITY);
+  tr[t3].lo.y = (F64)-1 * (TRIANG_INFINITY);
+  tr[t3].lo.x = (F64)-1 * (TRIANG_INFINITY);
   tr[t1].rseg = tr[t2].lseg = segnum;
   tr[t1].u0 = tr[t2].u0 = t4;
   tr[t1].d0 = tr[t2].d0 = t3;
@@ -901,9 +899,9 @@ static int init_query_structure(int segnum) {
  * have the same y--cood, etc.
  */
 
-static int is_left_of(int segnum, Vector2 *v) {
+static int is_left_of(int segnum, Coord2 *v) {
   segment_t *s = &seg[segnum];
-  float area;
+  F64 area;
 
   if (_greater_than(&s->v1, &s->v0)) /* seg. going upwards */
   {
@@ -956,7 +954,7 @@ static int inserted(int segnum, int whichpt) {
  * point v lie in. The return value is the trapezoid number.
  */
 
-int locate_endpoint(Vector2 *v, Vector2 *vo, int r) {
+static int locate_endpoint(Coord2 *v, Coord2 *vo, int r) {
   node_t *rptr = &qs[r];
 
   switch (rptr->nodetype) {
@@ -1077,7 +1075,7 @@ static int add_segment(int segnum) {
   int tu, tl, sk, tfirst, tlast, tnext;
   int tfirstr, tlastr, tfirstl, tlastl;
   int i1, i2, t, t1, t2, tn;
-  Vector2 tpt;
+  Coord2 tpt;
   int tritop = 0, tribot = 0, is_swapped = 0;
   int tmptriseg;
 
@@ -1439,8 +1437,8 @@ static int add_segment(int segnum) {
 
     else {
       int tmpseg = tr[tr[t].d0].rseg;
-      float y0, yt;
-      Vector2 tmppt;
+      F64 y0, yt;
+      Coord2 tmppt;
       int tnext, i_d0, i_d1;
 
       i_d0 = i_d1 = FALSE;
@@ -1601,7 +1599,7 @@ static int choose_idx;
 static int permute[SEGSIZE];
 
 /* Generate a random permutation of the segments 1..n */
-int generate_random_ordering(int n) {
+static int generate_random_ordering(int n) {
   int i;
   int m, st[SEGSIZE], *p;
 
@@ -1623,7 +1621,7 @@ int generate_random_ordering(int n) {
 
 /* Return the next segment in the generated random ordering of all the */
 /* segments in S */
-int choose_segment() {
+static int choose_segment() {
   int i;
 
 #ifdef DEBUG
@@ -1633,28 +1631,28 @@ int choose_segment() {
 }
 
 /* Get log*n for given n */
-int math_logstar_n(int n) {
+static int math_logstar_n(int n) {
   int i;
-  float v;
+  F64 v;
 
-  for (i = 0, v = (double)n; v >= 1; i++)
+  for (i = 0, v = (F64)n; v >= 1; i++)
     v = log2(v);
 
   return (i - 1);
 }
 
-int math_N(int n, int h) {
+static int math_N(int n, int h) {
   int i;
-  float v;
+  F64 v;
 
   for (i = 0, v = (int)n; i < h; i++)
     v = log2(v);
 
-  return (int)ceil((float)1.0 * n / v);
+  return (int)ceil((F64)1.0 * n / v);
 }
 
 /* Main routine to perform trapezoidation */
-int construct_trapezoids(int nseg) {
+static int construct_trapezoids(int nseg) {
   int i;
   int root, h;
 
@@ -1714,7 +1712,7 @@ static int initialise(int n) {
  * this routine
  */
 
-int triangulate_polygon(int ncontours, int cntr[], Vector2(*vertices),
+int triangulate_polygon(int ncontours, int cntr[], Coord2(*vertices),
                         TriangleArray *triangles) {
   int i;
   int nmonpoly, ccount, npoints, genus;

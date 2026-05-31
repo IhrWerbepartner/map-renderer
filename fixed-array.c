@@ -2,32 +2,32 @@
 
 #define DeclFixedArray(typename, type)                                         \
   typedef struct {                                                             \
-    U32 len, capacity;                                                         \
+    S32 len, capacity;                                                         \
     type *data;                                                                \
   } typename;                                                                  \
                                                                                \
-  typename typename##_new(Arena *arena, U32 capacity) {                        \
-    type *data = (type *)arena_alloc_align(arena, capacity * sizeof(type),     \
-                                           _Alignof(type));                    \
+  typename typename##New(Arena *arena, S32 capacity) {                         \
+    type *data = (type *)arena_alloc_align(                                    \
+        arena, (size_t)capacity * sizeof(type), _Alignof(type));               \
     return (typename){.len = 0, .capacity = capacity, .data = data};           \
   }                                                                            \
                                                                                \
-  void typename##_reset(typename *stck) {                                      \
+  void typename##Reset(typename *stck) {                                       \
     if (stck) {                                                                \
       stck->len = 0;                                                           \
     }                                                                          \
   }                                                                            \
                                                                                \
-  size_t typename##_length(typename *stack) { return stack ? stack->len : 0; } \
+  S32 typename##Length(typename *stack) { return stack ? stack->len : 0; }     \
                                                                                \
-  void typename##_push(typename *stack, type value) {                          \
-    if (!stack || stack->len + 1 > stack->capacity) {                          \
+  void typename##Push(typename *stack, type value) {                           \
+    if (!stack || stack->len >= stack->capacity) {                          \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
     stack->data[stack->len++] = value;                                         \
   }                                                                            \
                                                                                \
-  type typename##_pop(typename *stck) {                                        \
+  type typename##Pop(typename *stck) {                                         \
     if (!stck || stck->len == 0) {                                             \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \

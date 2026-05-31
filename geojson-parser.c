@@ -13,30 +13,30 @@
 #include <sys/types.h>
 #include <time.h>
 
-void init_all_arrays(Arena *arena, Geo_Json *base, U32 capacity) {
-  base->interest_points = PointArray_new(arena, capacity);
+void init_all_arrays(Arena *arena, Geo_Json *base, S32 capacity) {
+  base->interest_points = PointArrayNew(arena, capacity);
 
-  base->multi_point_coords = Vector2Array_new(
+  base->multi_point_coords = Coord2ArrayNew(
       arena, capacity); // TODO: figure out a capacity for the points
-  base->multi_points = MultiPointArray_new(arena, capacity);
+  base->multi_points = MultiPointArrayNew(arena, capacity);
 
-  base->line_string_coords = Vector2Array_new(
+  base->line_string_coords = Coord2ArrayNew(
       arena, capacity); // TODO: figure out a capacity for the points
-  base->line_strings = LineStringArray_new(arena, capacity);
+  base->line_strings = LineStringArrayNew(arena, capacity);
 
-  base->multi_line_string_coords = Vector2Array_new(
+  base->multi_line_string_coords = Coord2ArrayNew(
       arena, capacity); // TODO: figure out a capacity for the points
-  base->multi_line_string_array = LineStringArray_new(arena, capacity);
-  base->multi_line_strings = MultiLineStringArray_new(arena, capacity);
+  base->multi_line_string_array = LineStringArrayNew(arena, capacity);
+  base->multi_line_strings = MultiLineStringArrayNew(arena, capacity);
 
-  base->polygon_coords = Vector2Array_new(
+  base->polygon_coords = Coord2ArrayNew(
       arena, capacity); // TODO: figure out a capacity for the points
-  base->triangulated_polygons = TriangleArray_new(arena, capacity);
+  base->polygon_triangles = TriangleArrayNew(arena, capacity);
 
-  base->multi_polygon_coords = Vector2Array_new(
+  base->multi_polygon_coords = Coord2ArrayNew(
       arena, capacity); // TODO: figure out a capacity for the points
-  base->multi_polygon_array = PolygonArray_new(arena, capacity);
-  base->multi_polygons = MultiPolygonArray_new(arena, capacity);
+  base->multi_polygon_triangles = TriangleArrayNew(arena, capacity);
+  base->multi_polygons = MultiPolygonArrayNew(arena, capacity);
 }
 
 typedef enum JsonType {
@@ -62,7 +62,7 @@ typedef struct JsonNode {
       F64 dbl_value; // the value of DOUBLE node
     } num;
     struct { // children of OBJECT or ARRAY
-      U32 length;
+      S32 length;
       struct JsonNode *first;
       struct JsonNode *last;
     } children;
@@ -300,9 +300,9 @@ static char *parse_value(Arena *arena, JsonNode *parent, string8 key, char *p) {
         }
       } else {
         if (*p == '-') {
-          js->num.dbl_value = (double)js->num.s_value;
+          js->num.dbl_value = (F64)js->num.s_value;
         } else {
-          js->num.dbl_value = (double)js->num.u_value;
+          js->num.dbl_value = (F64)js->num.u_value;
         }
       }
       return pe;
@@ -405,7 +405,7 @@ JsonNode *find_key_in_children(JsonNode *node, string8 key) {
   return NULL;
 }
 
-Vector2 serialize_point2D(JsonNode *coordinates) {
+Coord2 Coord2FromJsonArrayNode(JsonNode *coordinates) {
   if (coordinates->type != JSON_ARRAY || coordinates->children.length != 2) {
     ERROR_MSG("invalid coordinates for Point supplied")
   }
@@ -414,16 +414,15 @@ Vector2 serialize_point2D(JsonNode *coordinates) {
   if (x_coordinate->type != JSON_DOUBLE || y_coordinate->type != JSON_DOUBLE) {
     ERROR_MSG("invalid coordinate type for Point supplied")
   }
-  return (Vector2){
-      .x = (F32)x_coordinate->num.dbl_value,
-      .y = -(F32)y_coordinate->num.dbl_value,
+  return (Coord2){
+      .x = x_coordinate->num.dbl_value,
+      .y = -y_coordinate->num.dbl_value,
   };
 }
 
 // iterate backwards over the coordinates omitting the first one as it is
 // identical to the last input: [a, b, c, d, e] returns [e, d, c, b]
-void contour_from_json_array(JsonNode *coordinates,
-                             Vector2Array *result_array) {
+void contour_from_json_array(JsonNode *coordinates, Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
@@ -433,20 +432,20 @@ void contour_from_json_array(JsonNode *coordinates,
   }
   JsonNode *point_coords = coordinates->children.last;
   while (point_coords != NULL && point_coords != coordinates->children.first) {
-    Vector2Array_push(result_array, serialize_point2D(point_coords));
+    Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
     point_coords = point_coords->prev;
   }
 }
 
-void vector2_array_from_json_array(JsonNode *coordinates,
-                                   Vector2Array *result_array) {
+void Coord2ArrayFromJsonArray(JsonNode *coordinates,
+                              Coord2Array *result_array) {
 
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
   JsonNode *point_coords = coordinates->children.first;
   while (point_coords != NULL) {
-    Vector2Array_push(result_array, serialize_point2D(point_coords));
+    Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
     point_coords = point_coords->next;
   }
 }
@@ -506,8 +505,9 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
     // "type" : "Point" parsing
     if (string8_equals(geometry_type->text_value,
                        string8_from_c_string("Point"))) {
-      PointArray_push(&parsed->interest_points,
-                      (Point){.coordinates = serialize_point2D(coordinates)});
+      PointArrayPush(
+          &parsed->interest_points,
+          (Point){.coordinates = Coord2FromJsonArrayNode(coordinates)});
     }
 
     if (string8_equals(geometry_type->text_value,
@@ -516,11 +516,11 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
           .coordinates = (Slice){.start = parsed->multi_points.len,
                                  .length = coordinates->children.length},
       };
-      vector2_array_from_json_array(coordinates, &parsed->multi_point_coords);
+      Coord2ArrayFromJsonArray(coordinates, &parsed->multi_point_coords);
       // assert that we inserted the correct amount of points
       assert(multi_point.coordinates.start + multi_point.coordinates.length ==
              parsed->multi_point_coords.len);
-      MultiPointArray_push(&parsed->multi_points, multi_point);
+      MultiPointArrayPush(&parsed->multi_points, multi_point);
     }
 
     if (string8_equals(geometry_type->text_value,
@@ -529,28 +529,50 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
           .coordinates = (Slice){.start = parsed->line_string_coords.len,
                                  .length = coordinates->children.length},
       };
-      vector2_array_from_json_array(coordinates, &parsed->line_string_coords);
-      assert(line_string.coordinates.start + line_string.coordinates.length ==
-             parsed->line_string_coords.len);
-      LineStringArray_push(&parsed->line_strings, line_string);
+      Coord2ArrayFromJsonArray(coordinates, &parsed->line_string_coords);
+      ASSERT(line_string.coordinates.start + line_string.coordinates.length ==
+                 parsed->line_string_coords.len,
+             "assert failed at line: %d", __LINE__)
+      LineStringArrayPush(&parsed->line_strings, line_string);
     }
 
     if (string8_equals(geometry_type->text_value,
                        string8_from_c_string("MultiLineString"))) {
-      // TODO: figure out how to parse this
-      // MultiLineString multi_line_string = (MultiLineString){};
+      JsonNode *line_string = coordinates->children.first;
+      MultiLineString mls = (MultiLineString){
+          .coordinates = (Slice){.start = parsed->multi_line_string_array.len,
+                                 .length = coordinates->children.length},
+      };
+      while (line_string != NULL) {
+        LineString ls = (LineString){
+            .coordinates =
+                (Slice){.start = parsed->multi_line_string_coords.len,
+                        .length = coordinates->children.length},
+        };
+        Coord2ArrayFromJsonArray(coordinates,
+                                 &parsed->multi_line_string_coords);
+        ASSERT(ls.coordinates.start + ls.coordinates.length ==
+                   parsed->multi_line_string_coords.len,
+               "assert failed at line: %d", __LINE__)
+        LineStringArrayPush(&parsed->multi_line_string_array, ls);
+        line_string = line_string->next;
+      }
+      MultiLineStringArrayPush(&parsed->multi_line_strings, mls);
     }
+
     if (string8_equals(geometry_type->text_value,
                        string8_from_c_string("Polygon"))) {
       S32 contour_count = coordinates->children.length;
       S32 *contour_sizes =
-          (S32 *)arena_alloc(scratch.arena, contour_count * sizeof(S32));
-      Vector2 *vertices =
+          (S32 *)arena_alloc(scratch.arena, contour_count * (S32)sizeof(S32));
+      Coord2 *vertices =
           &parsed->polygon_coords.data[parsed->polygon_coords.len];
-      Vector2Array_push(
-          &parsed->polygon_coords,
-          (Vector2){0.f,
-                    0.f}); // create emtpy slot at vertices[0] for triangulation
+      S32 first_coordinate_idx = parsed->polygon_coords.len;
+      S32 first_triangle_idx = parsed->polygon_triangles.len;
+
+      // create emtpy slot at vertices[0] for triangulation
+      Coord2ArrayPush(&parsed->polygon_coords, (Coord2){0.f, 0.f});
+
       JsonNode *contour_array = coordinates->children.first;
       S32 i = 0;
       while (contour_array != NULL) {
@@ -561,12 +583,83 @@ Geo_Json *serialize(Arena *arena, JsonNode *root) {
         contour_sizes[i] = contour_array->children.length - 1;
         contour_from_json_array(contour_array, &parsed->polygon_coords);
         contour_array = contour_array->next;
+        i++;
       }
       triangulate_polygon(contour_count, contour_sizes, vertices,
-                          &parsed->triangulated_polygons);
+                          &parsed->polygon_triangles);
+
+      // we need to fix the indices as they are local to a polygon, but they now
+      // point into the global coordintate array.
+      for (S32 j = first_triangle_idx; j < parsed->polygon_triangles.len; j++) {
+        parsed->polygon_triangles.data[j].a += first_coordinate_idx;
+        parsed->polygon_triangles.data[j].b += first_coordinate_idx;
+        parsed->polygon_triangles.data[j].c += first_coordinate_idx;
+        assert(parsed->polygon_triangles.data[j].a > first_coordinate_idx &&
+               parsed->polygon_triangles.data[j].a <
+                   parsed->polygon_coords.len);
+        assert(parsed->polygon_triangles.data[j].b > first_coordinate_idx &&
+               parsed->polygon_triangles.data[j].b <
+                   parsed->polygon_coords.len);
+        assert(parsed->polygon_triangles.data[j].c > first_coordinate_idx &&
+               parsed->polygon_triangles.data[j].c <
+                   parsed->polygon_coords.len);
+      }
     }
+
     if (string8_equals(geometry_type->text_value,
                        string8_from_c_string("MultiPolygon"))) {
+      JsonNode *polygon = coordinates->children.first;
+      ASSERT(polygon->type == JSON_ARRAY,
+             "expected array for MultiPolygon coordinates\n")
+
+      while (polygon != NULL) {
+        S32 contour_count = polygon->children.length;
+        S32 *contour_sizes =
+            (S32 *)arena_alloc(scratch.arena, contour_count * (S32)sizeof(S32));
+        Coord2 *vertices = &parsed->multi_polygon_coords
+                                .data[parsed->multi_polygon_coords.len];
+        S32 first_coordinate_idx = parsed->multi_polygon_coords.len;
+        S32 first_triangle_idx = parsed->multi_polygon_triangles.len;
+
+        // create emtpy slot at vertices[0] for triangulation
+        Coord2ArrayPush(&parsed->multi_polygon_coords, (Coord2){0.f, 0.f});
+
+        JsonNode *contour_array = polygon->children.first;
+        S32 i = 0;
+        while (contour_array != NULL) {
+          ASSERT(contour_array->children.length > 1,
+                 "invalid size for polygon contour: %d",
+                 contour_array->children.length)
+          contour_sizes[i] = contour_array->children.length - 1;
+          contour_from_json_array(contour_array, &parsed->multi_polygon_coords);
+          contour_array = contour_array->next;
+          i++;
+        }
+        triangulate_polygon(contour_count, contour_sizes, vertices,
+                            &parsed->multi_polygon_triangles);
+
+        // we need to fix the indices as they are local to a polygon, but they
+        // now point into the global coordintate array.
+        for (S32 j = first_triangle_idx;
+             j < parsed->multi_polygon_triangles.len; j++) {
+          parsed->multi_polygon_triangles.data[j].a += first_coordinate_idx;
+          parsed->multi_polygon_triangles.data[j].b += first_coordinate_idx;
+          parsed->multi_polygon_triangles.data[j].c += first_coordinate_idx;
+          assert(parsed->multi_polygon_triangles.data[j].a >
+                     first_coordinate_idx &&
+                 parsed->multi_polygon_triangles.data[j].a <
+                     parsed->multi_polygon_coords.len);
+          assert(parsed->multi_polygon_triangles.data[j].b >
+                     first_coordinate_idx &&
+                 parsed->multi_polygon_triangles.data[j].b <
+                     parsed->multi_polygon_coords.len);
+          assert(parsed->multi_polygon_triangles.data[j].c >
+                     first_coordinate_idx &&
+                 parsed->multi_polygon_triangles.data[j].c <
+                     parsed->multi_polygon_coords.len);
+        }
+        polygon = polygon->next;
+      }
     }
 
     current_child = current_child->next;
@@ -602,22 +695,22 @@ Geo_Json *geo_json_parse(Arena *arena, char *filepath) {
 void draw_points(Geo_Json *coords, Camera2D camera) {
   // --------------------- POINTS -------------------
   PointArray ips = coords->interest_points;
-  for (size_t i = 0; i < ips.len; i++) {
-    Vector2 a = GetWorldToScreen2D(
-        (Vector2){ips.data[i].coordinates.x, -ips.data[i].coordinates.y},
-        camera);
+  for (S32 i = 0; i < ips.len; i++) {
+    Vector2 a =
+        GetWorldToScreen2D(Vector2FromCoord2(ips.data[i].coordinates), camera);
     DrawCircleV(a, 5.0f, RED);
   }
 }
 void draw_multi_points(Geo_Json *coords, Camera2D camera) {
   // --------------------- MULTI-POINTS -------------------
   MultiPointArray points = coords->multi_points;
-  Vector2Array m_coords = coords->multi_point_coords;
-  for (size_t i = 0; i < points.len; i++) {
-    size_t start_index = points.data[i].coordinates.start;
-    size_t length = points.data[i].coordinates.length;
-    for (size_t j = 0; j < length; j++) {
-      Vector2 a = GetWorldToScreen2D(m_coords.data[start_index + j], camera);
+  Coord2Array m_coords = coords->multi_point_coords;
+  for (S32 i = 0; i < points.len; i++) {
+    const S32 start_index = points.data[i].coordinates.start;
+    const S32 length = points.data[i].coordinates.length;
+    for (S32 j = 0; j < length; j++) {
+      Vector2 a = GetWorldToScreen2D(
+          Vector2FromCoord2(m_coords.data[start_index + j]), camera);
       DrawCircleV(a, 5.0f, RED);
       // DEBUG("drawing: [%03.05f, %03.05f]\n", a.x, a.y)
     }
@@ -627,14 +720,15 @@ void draw_line_strings(Geo_Json *coords, Camera2D camera,
                        int show_node_endpoints) {
   // --------------------- LINE-STRINGS -------------------
   LineStringArray lines = coords->line_strings;
-  Vector2Array l_coords = coords->line_string_coords;
-  for (size_t i = 0; i < lines.len; i++) {
-    size_t start_index = lines.data[i].coordinates.start;
-    size_t length = lines.data[i].coordinates.length;
-    for (size_t j = 0; j < length - 1; j++) {
-      Vector2 a = GetWorldToScreen2D(l_coords.data[start_index + j], camera);
-      Vector2 b =
-          GetWorldToScreen2D(l_coords.data[start_index + j + 1], camera);
+  Coord2Array l_coords = coords->line_string_coords;
+  for (S32 i = 0; i < lines.len; i++) {
+    const S32 start_index = lines.data[i].coordinates.start;
+    const S32 length = lines.data[i].coordinates.length;
+    for (S32 j = 0; j < length - 1; j++) {
+      Vector2 a = GetWorldToScreen2D(
+          Vector2FromCoord2(l_coords.data[start_index + j]), camera);
+      Vector2 b = GetWorldToScreen2D(
+          Vector2FromCoord2(l_coords.data[start_index + j + 1]), camera);
       // TODO: add cohen-sutherland clipping here
       DrawLineEx(a, b, 5.0f, BLUE);
       // DEBUG("drawing: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n", a.x,
@@ -646,16 +740,22 @@ void draw_line_strings(Geo_Json *coords, Camera2D camera,
     }
   }
 }
-void draw_multi_line_strings(Geo_Json *_coords, Camera2D _camera) {};
+void draw_multi_line_strings(Geo_Json *_coords, Camera2D _camera) {
+  // -------------------- MUTLI LINE STRINGS -----------------------
+}
+
 void draw_polygons(Geo_Json *coords, Camera2D camera) {
-  // --------------------- POLYGONS -------------------
-  TriangleArray triangles = coords->triangulated_polygons;
-  Vector2Array p_coords = coords->polygon_coords;
-  for (size_t i = 0; i < triangles.len; i++) {
+  // --------------------- POLYGONS ---------------------
+  TriangleArray triangles = coords->polygon_triangles;
+  Coord2Array p_coords = coords->polygon_coords;
+  for (S32 i = 0; i < triangles.len; i++) {
     Triangle t = triangles.data[i];
-    Vector2 a = GetWorldToScreen2D(p_coords.data[t.a], camera);
-    Vector2 b = GetWorldToScreen2D(p_coords.data[t.b], camera);
-    Vector2 c = GetWorldToScreen2D(p_coords.data[t.c], camera);
+    Vector2 a =
+        GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.a]), camera);
+    Vector2 b =
+        GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.b]), camera);
+    Vector2 c =
+        GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.c]), camera);
 
     // we need to specify the triangle in couter-clockwise order but because we
     // reversed the coords the output we get is in clockwise order, therefore
@@ -667,7 +767,28 @@ void draw_polygons(Geo_Json *coords, Camera2D camera) {
   }
 }
 
-void draw_multi_polygons(Geo_Json *_coords, Camera2D _camera) {};
+void draw_multi_polygons(Geo_Json *coords, Camera2D camera) {
+  // --------------------- MUTLI POLYGONS ---------------------
+  TriangleArray triangles = coords->multi_polygon_triangles;
+  Coord2Array p_coords = coords->multi_polygon_coords;
+  for (S32 i = 0; i < triangles.len; i++) {
+    Triangle t = triangles.data[i];
+    Vector2 a =
+        GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.a]), camera);
+    Vector2 b =
+        GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.b]), camera);
+    Vector2 c =
+        GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.c]), camera);
+
+    // we need to specify the triangle in couter-clockwise order but because we
+    // reversed the coords the output we get is in clockwise order, therefore
+    // change b, and c.
+    DrawTriangle(a, c, b, BLUE);
+    DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f, %03.05f][%03.05f, "
+              "%03.05f]\n",
+              a.x, a.y, b.x, b.y, c.x, c.y)
+  }
+}
 
 void usage(char *program_name) {
   printf("usage: %s <filepath>\n", program_name);
@@ -678,7 +799,7 @@ int main(int argc, char **argv) {
     usage(argv[0]);
     exit(EXIT_FAILURE);
   }
-  size_t backing_buffer_size = 1024 * 1024 * 1024;
+  const U64 backing_buffer_size = 1024 * 1024 * 1024;
   void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   arena_init(arenas[0], backing_buffer, backing_buffer_size);
@@ -708,11 +829,11 @@ int main(int argc, char **argv) {
 
   {
     LineStringArray lines = serialized_coords->line_strings;
-    Vector2Array l_coords = serialized_coords->line_string_coords;
-    for (size_t i = 0; i < lines.len; i++) {
-      size_t start_index = lines.data[i].coordinates.start;
-      size_t length = lines.data[i].coordinates.length;
-      for (size_t j = 0; j < length - 1; j++) {
+    Coord2Array l_coords = serialized_coords->line_string_coords;
+    for (S32 i = 0; i < lines.len; i++) {
+      const S32 start_index = lines.data[i].coordinates.start;
+      const S32 length = lines.data[i].coordinates.length;
+      for (S32 j = 0; j < length - 1; j++) {
         DEBUG_MSG("line: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n",
                   l_coords.data[start_index + j].x * ((F64)screenWidth / 180.0),
                   (F32)(l_coords.data[start_index + j].y) *
