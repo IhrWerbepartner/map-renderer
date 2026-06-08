@@ -1,6 +1,6 @@
 #include "base.h"
-#include "string8.c"
 #include "raymath.h"
+#include "string8.c"
 #include "triangulate.h"
 #include <assert.h>
 #include <errno.h>
@@ -567,15 +567,14 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
     }
 
     // "type" : "Point" parsing
-    if (String8Equals(geometry_type->text_value,
-                       String8FromCString("Point"))) {
+    if (String8Equals(geometry_type->text_value, String8FromCString("Point"))) {
       PointArrayPush(
           &parsed->interest_points,
           (Point){.coordinates = Coord2FromJsonArrayNode(coordinates)});
     }
 
     if (String8Equals(geometry_type->text_value,
-                       String8FromCString("MultiPoint"))) {
+                      String8FromCString("MultiPoint"))) {
       MultiPoint multi_point = (MultiPoint){
           .coordinates = (Slice){.start = parsed->multi_points.len,
                                  .length = coordinates->children.length},
@@ -588,7 +587,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
     }
 
     if (String8Equals(geometry_type->text_value,
-                       String8FromCString("LineString"))) {
+                      String8FromCString("LineString"))) {
       LineString line_string = (LineString){
           .coordinates = (Slice){.start = parsed->line_string_coords.len,
                                  .length = coordinates->children.length},
@@ -601,7 +600,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
     }
 
     if (String8Equals(geometry_type->text_value,
-                       String8FromCString("MultiLineString"))) {
+                      String8FromCString("MultiLineString"))) {
       JsonNode *line_string = coordinates->children.first;
       MultiLineString mls = (MultiLineString){
           .coordinates = (Slice){.start = parsed->multi_line_string_array.len,
@@ -625,7 +624,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
     }
 
     if (String8Equals(geometry_type->text_value,
-                       String8FromCString("Polygon"))) {
+                      String8FromCString("Polygon"))) {
       S32 contour_count = coordinates->children.length;
       S32 *contour_sizes = (S32 *)arena_alloc(
           scratch.arena, (size_t)contour_count * sizeof(S32));
@@ -671,7 +670,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
     }
 
     if (String8Equals(geometry_type->text_value,
-                       String8FromCString("MultiPolygon"))) {
+                      String8FromCString("MultiPolygon"))) {
       JsonNode *polygon = coordinates->children.first;
       ASSERT(polygon->type == JSON_ARRAY,
              "expected array for MultiPolygon coordinates\n")
@@ -706,21 +705,28 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
         // now point into the global coordintate array.
         for (S32 j = first_triangle_idx;
              j < parsed->multi_polygon_triangles.len; j++) {
-          parsed->multi_polygon_triangles.data[j].a += first_coordinate_idx;
-          parsed->multi_polygon_triangles.data[j].b += first_coordinate_idx;
-          parsed->multi_polygon_triangles.data[j].c += first_coordinate_idx;
-          assert(parsed->multi_polygon_triangles.data[j].a >
-                     first_coordinate_idx &&
-                 parsed->multi_polygon_triangles.data[j].a <
-                     parsed->multi_polygon_coords.len);
-          assert(parsed->multi_polygon_triangles.data[j].b >
-                     first_coordinate_idx &&
-                 parsed->multi_polygon_triangles.data[j].b <
-                     parsed->multi_polygon_coords.len);
-          assert(parsed->multi_polygon_triangles.data[j].c >
-                     first_coordinate_idx &&
-                 parsed->multi_polygon_triangles.data[j].c <
-                     parsed->multi_polygon_coords.len);
+          Triangle *triangle = &parsed->multi_polygon_triangles.data[j];
+          triangle->a += first_coordinate_idx;
+          triangle->b += first_coordinate_idx;
+          triangle->c += first_coordinate_idx;
+          ASSERT(triangle->a > first_coordinate_idx &&
+                     triangle->a < parsed->multi_polygon_coords.len,
+                 "multi polygon index out of range, should be inside (%d-%d), "
+                 "was: %d",
+                 first_coordinate_idx, parsed->multi_polygon_coords.len,
+                 triangle->a);
+          ASSERT(triangle->b > first_coordinate_idx &&
+                     triangle->b < parsed->multi_polygon_coords.len,
+                 "multi polygon index out of range, should be inside (%d-%d), "
+                 "was: %d",
+                 first_coordinate_idx, parsed->multi_polygon_coords.len,
+                 triangle->b);
+          ASSERT(triangle->c > first_coordinate_idx &&
+                     triangle->c < parsed->multi_polygon_coords.len,
+                 "multi polygon index out of range, should be inside (%d-%d), "
+                 "was: %d",
+                 first_coordinate_idx, parsed->multi_polygon_coords.len,
+                 triangle->c);
         }
         polygon = polygon->next;
       }
@@ -799,7 +805,9 @@ void draw_line_strings(GeoJson *coords, Camera2D camera,
       // a.y, b.x, b.y)
       if (show_node_endpoints) {
         DrawCircleV(a, 5.0f, RED);
-        DrawCircleV(b, 5.0f, GREEN);
+        if (j == length - 1) {
+          DrawCircleV(b, 5.0f, GREEN);
+        }
       }
     }
   }

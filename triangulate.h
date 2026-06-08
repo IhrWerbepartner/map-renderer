@@ -10,7 +10,7 @@
 
 /* Segment attributes */
 typedef struct {
-  Coord2 v0, v1;   /* two endpoints */
+  Coord2 v0, v1;    /* two endpoints */
   int is_inserted;  /* inserted in trapezoidation yet ? */
   int root0, root1; /* root nodes in Q */
   int next;         /* Next logical segment */
@@ -21,7 +21,7 @@ typedef struct {
 
 typedef struct {
   int lseg, rseg; /* two adjoining segments */
-  Coord2 hi, lo; /* max/min y-values */
+  Coord2 hi, lo;  /* max/min y-values */
   int u0, u1;
   int d0, d1;
   int sink;         /* pointer to corresponding in Q */
@@ -31,8 +31,16 @@ typedef struct {
 
 /* Node attributes for every node in the query structure */
 
+/* Node types */
+
+typedef enum NodeType {
+  T_X = 1,
+  T_Y = 2,
+  T_SINK = 3,
+} NodeType;
+
 typedef struct {
-  int nodetype; /* Y-node or S-node */
+  NodeType nodetype; /* Y-node or S-node */
   int segnum;
   Coord2 yval;
   int trnum;
@@ -54,17 +62,11 @@ typedef struct {
   int nextfree;
 } vertexchain_t;
 
-/* Node types */
-
-#define T_X 1
-#define T_Y 2
-#define T_SINK 3
-
 #define SEGSIZE 5000 /* max# of segments. Determines how */
-                    /* many points can be specified as */
-                    /* input. If your datasets have large */
-                    /* number of points, increase this */
-                    /* value accordingly. */
+                     /* many points can be specified as */
+                     /* input. If your datasets have large */
+                     /* number of points, increase this */
+                     /* value accordingly. */
 
 #define QSIZE 8 * SEGSIZE  /* maximum table sizes */
 #define TRSIZE 4 * SEGSIZE /* max# trapezoids */
@@ -77,10 +79,10 @@ typedef struct {
 
 #define TRIANG_INFINITY 1 << 30
 #define C_EPS 1.0e-15 /* tolerance value: Used for making */
-                     /* all decisions about collinearity or */
-                     /* left/right of segment. Decrease */
-                     /* this value if the input points are */
-                     /* spaced very close together */
+                      /* all decisions about collinearity or */
+                      /* left/right of segment. Decrease */
+                      /* this value if the input points are */
+                      /* spaced very close together */
 
 #define S_LEFT 1 /* for merge-direction */
 #define S_RIGHT 2
@@ -619,7 +621,8 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
 /* triangulation. */
 /* Take care not to triangulate duplicate monotone polygons */
 
-static void triangulate_monotone_polygons(int nvert, int nmonpoly, TriangleArray *op) {
+static void triangulate_monotone_polygons(int nvert, int nmonpoly,
+                                          TriangleArray *op) {
   int i;
   Coord2 ymax, ymin;
   int p, vfirst, posmax, posmin, v;
@@ -672,11 +675,11 @@ static void triangulate_monotone_polygons(int nvert, int nmonpoly, TriangleArray
     if (vcount == 3) /* already a triangle */
     {
       TriangleArrayPush(op, (Triangle){
-                                 mchain[p].vnum,
-                                 mchain[mchain[p].next].vnum,
-                                 mchain[mchain[p].prev].vnum,
+                                mchain[p].vnum,
+                                mchain[mchain[p].next].vnum,
+                                mchain[mchain[p].prev].vnum,
 
-                             });
+                            });
     } else /* triangulate the polygon */
     {
       v = mchain[mchain[posmax].next].vnum;
@@ -687,11 +690,11 @@ static void triangulate_monotone_polygons(int nvert, int nmonpoly, TriangleArray
     }
   }
 
-  
 #ifdef DEBUG
   {
-  for (size_t i = 0; i < TriangleArrayLength(op); i++)
-    fprintf(stderr, "tri #%ld: (%d, %d, %d)\n", i, op->data[i].a, op->data[i].b, op->data[i].c);
+    for (size_t i = 0; i < TriangleArrayLength(op); i++)
+      fprintf(stderr, "tri #%ld: (%d, %d, %d)\n", i, op->data[i].a,
+              op->data[i].b, op->data[i].c);
   }
 #endif
 }
@@ -738,10 +741,10 @@ static int triangulate_single_polygon(int nvert, int posmax, int side,
       if (CROSS(vert[v].pt, vert[rc[ri - 1]].pt, vert[rc[ri]].pt) >
           0) { /* convex corner: cut if off */
         TriangleArrayPush(op, (Triangle){
-                                   rc[ri - 1],
-                                   rc[ri],
-                                   v,
-                               });
+                                  rc[ri - 1],
+                                  rc[ri],
+                                  v,
+                              });
         ri--;
       } else /* non-convex */
       {      /* add v to the chain */
@@ -760,10 +763,10 @@ static int triangulate_single_polygon(int nvert, int posmax, int side,
 
   /* reached the bottom vertex. Add in the triangle formed */
   TriangleArrayPush(op, (Triangle){
-                             rc[ri - 1],
-                             rc[ri],
-                             v,
-                         });
+                            rc[ri - 1],
+                            rc[ri],
+                            v,
+                        });
   ri--;
 
   return 0;

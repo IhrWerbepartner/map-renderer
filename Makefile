@@ -1,4 +1,4 @@
-GEO_FILE=./samples/poly_austria.json
+GEO_FILE=./samples/random-gps-tracks-100.geojson
 EXE_NAME= map-renderer
 EXE_NAME_UNOPTIMIZED= unoptimized-map-renderer
 CFLAGS= -Wextra -Wall -Wundef -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-default -Wswitch-enum -Wconversion 
