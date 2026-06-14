@@ -10,9 +10,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/types.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <memoryapi.h>
+#else
+#include <sys/mman.h>
+#endif
 
 typedef struct geo_properties {
   String8 key;
@@ -872,12 +877,23 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
   const U64 backing_buffer_size = 1024 * 1024 * 1024;
+#ifdef _WIN32
+  void *backing_buffer = VirtualAlloc(NULL, backing_buffer_size,
+                                      MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
   void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
   arena_init(arenas[0], backing_buffer, backing_buffer_size);
 
+#ifdef _WIN32
+  backing_buffer = VirtualAlloc(NULL, backing_buffer_size,
+                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
   backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
+
   arena_init(arenas[1], backing_buffer, backing_buffer_size);
   Arena *arena = GetScratch().arena;
   GeoJson *serialized_coords = geo_json_parse(arena, argv[1]);

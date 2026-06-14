@@ -1592,14 +1592,14 @@ static int generate_random_ordering(int n) {
   int m, st[SEGSIZE], *p;
 
   choose_idx = 1;
-  srand48(time(NULL));
+  srand(time(NULL));
 
   for (i = 0; i <= n; i++)
     st[i] = i;
 
   p = st;
   for (i = 1; i <= n; i++, p++) {
-    m = lrand48() % (n + 1 - i) + 1;
+    m = rand() % (n + 1 - i) + 1;
     permute[i] = p[m];
     if (m != 1)
       p[m] = p[1];
