@@ -16,6 +16,9 @@
     exit(EXIT_FAILURE);                                                        \
   }
 
+#define Min(A, B) (((A) < (B)) ? (A) : (B))
+#define Max(A, B) (((A) > (B)) ? (A) : (B))
+
 typedef uint8_t U8;
 typedef uint16_t U16;
 typedef uint32_t U32;
@@ -47,5 +50,12 @@ typedef struct slice {
   S32 length;
 } Slice; // index into the point2DArray
 
-DeclFixedArray(Coord2Array, Coord2) DeclFixedArray(Vector2Array, Vector2)
-    DeclFixedArray(TriangleArray, Triangle)
+DeclFixedArray(Coord2Array, Coord2);
+DeclFixedArray(Vector2Array, Vector2);
+DeclFixedArray(TriangleArray, Triangle);
+DeclFixedArray(U32Array, U32);
+DeclFixedArray(S32Array, S32);
+
+static Arena arena1 = {0};
+static Arena arena2 = {0};
+static Arena *arenas[2] = {&arena1, &arena2};

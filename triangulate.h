@@ -20,7 +20,7 @@ typedef struct {
 /* Trapezoid attributes */
 
 typedef struct {
-  int lseg, rseg; /* two adjoining segments */
+  int left_segment, right_segment; /* two adjoining segments */
   Coord2 hi, lo;  /* max/min y-values */
   int u0, u1;
   int d0, d1;
@@ -209,12 +209,12 @@ static int _less_than(Coord2 *v0, Coord2 *v1) {
 
 /* Function returns TRUE if the trapezoid lies inside the polygon */
 static int inside_polygon(Trapezoid *t) {
-  int rseg = t->rseg;
+  int rseg = t->right_segment;
 
   if (t->state == ST_INVALID)
     return 0;
 
-  if ((t->lseg <= 0) || (t->rseg <= 0))
+  if ((t->left_segment <= 0) || (t->right_segment <= 0))
     return 0;
 
   if (((t->u0 <= 0) && (t->u1 <= 0)) ||
@@ -423,8 +423,8 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   if ((t->u0 <= 0) && (t->u1 <= 0)) {
     if ((t->d0 > 0) && (t->d1 > 0)) /* downward opening triangle */
     {
-      v0 = trapezoids[t->d1].lseg;
-      v1 = t->lseg;
+      v0 = trapezoids[t->d1].left_segment;
+      v1 = t->left_segment;
       if (from == t->d1) {
         mnew = make_new_monotone_poly(mcur, v1, v0);
         traverse_polygon(mcur, t->d1, trnum, TR_FROM_UP);
@@ -446,8 +446,8 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   else if ((t->d0 <= 0) && (t->d1 <= 0)) {
     if ((t->u0 > 0) && (t->u1 > 0)) /* upward opening triangle */
     {
-      v0 = t->rseg;
-      v1 = trapezoids[t->u0].rseg;
+      v0 = t->right_segment;
+      v1 = trapezoids[t->u0].right_segment;
       if (from == t->u1) {
         mnew = make_new_monotone_poly(mcur, v1, v0);
         traverse_polygon(mcur, t->u1, trnum, TR_FROM_DN);
@@ -469,8 +469,8 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   else if ((t->u0 > 0) && (t->u1 > 0)) {
     if ((t->d0 > 0) && (t->d1 > 0)) /* downward + upward cusps */
     {
-      v0 = trapezoids[t->d1].lseg;
-      v1 = trapezoids[t->u0].rseg;
+      v0 = trapezoids[t->d1].left_segment;
+      v1 = trapezoids[t->u0].right_segment;
       retval = SP_2UP_2DN;
       if (((dir == TR_FROM_DN) && (t->d1 == from)) ||
           ((dir == TR_FROM_UP) && (t->u1 == from))) {
@@ -488,9 +488,9 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
       }
     } else /* only downward cusp */
     {
-      if (_equal_to(&t->lo, &segments[t->lseg].v1)) {
-        v0 = trapezoids[t->u0].rseg;
-        v1 = segments[t->lseg].next;
+      if (_equal_to(&t->lo, &segments[t->left_segment].v1)) {
+        v0 = trapezoids[t->u0].right_segment;
+        v1 = segments[t->left_segment].next;
 
         retval = SP_2UP_LEFT;
         if ((dir == TR_FROM_UP) && (t->u0 == from)) {
@@ -507,8 +507,8 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
           traverse_polygon(mnew, t->u0, trnum, TR_FROM_DN);
         }
       } else {
-        v0 = t->rseg;
-        v1 = trapezoids[t->u0].rseg;
+        v0 = t->right_segment;
+        v1 = trapezoids[t->u0].right_segment;
         retval = SP_2UP_RIGHT;
         if ((dir == TR_FROM_UP) && (t->u1 == from)) {
           mnew = make_new_monotone_poly(mcur, v1, v0);
@@ -529,9 +529,9 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   {
     if ((t->d0 > 0) && (t->d1 > 0)) /* only upward cusp */
     {
-      if (_equal_to(&t->hi, &segments[t->lseg].v0)) {
-        v0 = trapezoids[t->d1].lseg;
-        v1 = t->lseg;
+      if (_equal_to(&t->hi, &segments[t->left_segment].v0)) {
+        v0 = trapezoids[t->d1].left_segment;
+        v1 = t->left_segment;
         retval = SP_2DN_LEFT;
         if (!((dir == TR_FROM_DN) && (t->d0 == from))) {
           mnew = make_new_monotone_poly(mcur, v1, v0);
@@ -547,8 +547,8 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
           traverse_polygon(mnew, t->d1, trnum, TR_FROM_UP);
         }
       } else {
-        v0 = trapezoids[t->d1].lseg;
-        v1 = segments[t->rseg].next;
+        v0 = trapezoids[t->d1].left_segment;
+        v1 = segments[t->right_segment].next;
 
         retval = SP_2DN_RIGHT;
         if ((dir == TR_FROM_DN) && (t->d1 == from)) {
@@ -567,10 +567,10 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
       }
     } else /* no cusp */
     {
-      if (_equal_to(&t->hi, &segments[t->lseg].v0) &&
-          _equal_to(&t->lo, &segments[t->rseg].v0)) {
-        v0 = t->rseg;
-        v1 = t->lseg;
+      if (_equal_to(&t->hi, &segments[t->left_segment].v0) &&
+          _equal_to(&t->lo, &segments[t->right_segment].v0)) {
+        v0 = t->right_segment;
+        v1 = t->left_segment;
         retval = SP_SIMPLE_LRDN;
         if (dir == TR_FROM_UP) {
           mnew = make_new_monotone_poly(mcur, v1, v0);
@@ -585,10 +585,10 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
           traverse_polygon(mnew, t->u0, trnum, TR_FROM_DN);
           traverse_polygon(mnew, t->u1, trnum, TR_FROM_DN);
         }
-      } else if (_equal_to(&t->hi, &segments[t->rseg].v1) &&
-                 _equal_to(&t->lo, &segments[t->lseg].v1)) {
-        v0 = segments[t->rseg].next;
-        v1 = segments[t->lseg].next;
+      } else if (_equal_to(&t->hi, &segments[t->right_segment].v1) &&
+                 _equal_to(&t->lo, &segments[t->left_segment].v1)) {
+        v0 = segments[t->right_segment].next;
+        v1 = segments[t->left_segment].next;
 
         retval = SP_SIMPLE_LRUP;
         if (dir == TR_FROM_UP) {
@@ -633,12 +633,12 @@ static void triangulate_monotone_polygons(int nvert, int nmonpoly,
 #ifdef DEBUG
   for (i = 0; i < nmonpoly; i++) {
     fprintf(stderr, "\n\nPolygon %d: ", i);
-    vfirst = mchain[mon[i]].vnum;
-    p = mchain[mon[i]].next;
-    fprintf(stderr, "%d ", mchain[mon[i]].vnum);
-    while (mchain[p].vnum != vfirst) {
-      fprintf(stderr, "%d ", mchain[p].vnum);
-      p = mchain[p].next;
+    vfirst = monotone_chain[mon[i]].vnum;
+    p = monotone_chain[mon[i]].next;
+    fprintf(stderr, "%d ", monotone_chain[mon[i]].vnum);
+    while (monotone_chain[p].vnum != vfirst) {
+      fprintf(stderr, "%d ", monotone_chain[p].vnum);
+      p = monotone_chain[p].next;
     }
   }
   fprintf(stderr, "\n");
@@ -703,7 +703,7 @@ static void triangulate_monotone_polygons(int nvert, int nmonpoly,
 
 /* A greedy corner-cutting algorithm to triangulate a y-monotone
  * polygon in O(n) time.
- * Joseph O-Rourke, Computational Geometry in C.
+ * Joseph O-Rourke, Computational Geometry in C. Page 47
  */
 static int triangulate_single_polygon(int nvert, int posmax, int side,
                                       TriangleArray *op) {
@@ -790,8 +790,8 @@ static int newnode(void) {
 /* Return a free trapezoid */
 static int NewTrapezoid(void) {
   if (tr_idx < TRSIZE) {
-    trapezoids[tr_idx].lseg = -1;
-    trapezoids[tr_idx].rseg = -1;
+    trapezoids[tr_idx].left_segment = -1;
+    trapezoids[tr_idx].right_segment = -1;
     trapezoids[tr_idx].state = ST_VALID;
     return tr_idx++;
   } else {
@@ -866,7 +866,7 @@ static int init_query_structure(int segnum) {
   trapezoids[t4].hi.x = (F64)(TRIANG_INFINITY);
   trapezoids[t3].lo.y = (F64)-1 * (TRIANG_INFINITY);
   trapezoids[t3].lo.x = (F64)-1 * (TRIANG_INFINITY);
-  trapezoids[t1].rseg = trapezoids[t2].lseg = segnum;
+  trapezoids[t1].right_segment = trapezoids[t2].left_segment = segnum;
   trapezoids[t1].u0 = trapezoids[t2].u0 = t4;
   trapezoids[t1].d0 = trapezoids[t2].d0 = t3;
   trapezoids[t4].d0 = trapezoids[t3].u0 = t1;
@@ -1010,18 +1010,18 @@ static int merge_trapezoids(int segnum, int tfirst, int tlast, int side) {
          _greater_than_equal_to(&trapezoids[t].lo, &trapezoids[tlast].lo)) {
     if (side == S_LEFT)
       cond = ((((tnext = trapezoids[t].d0) > 0) &&
-               (trapezoids[tnext].rseg == segnum)) ||
+               (trapezoids[tnext].right_segment == segnum)) ||
               (((tnext = trapezoids[t].d1) > 0) &&
-               (trapezoids[tnext].rseg == segnum)));
+               (trapezoids[tnext].right_segment == segnum)));
     else
       cond = ((((tnext = trapezoids[t].d0) > 0) &&
-               (trapezoids[tnext].lseg == segnum)) ||
+               (trapezoids[tnext].left_segment == segnum)) ||
               (((tnext = trapezoids[t].d1) > 0) &&
-               (trapezoids[tnext].lseg == segnum)));
+               (trapezoids[tnext].left_segment == segnum)));
 
     if (cond) {
-      if ((trapezoids[t].lseg == trapezoids[tnext].lseg) &&
-          (trapezoids[t].rseg == trapezoids[tnext].rseg)) /* good neighbours */
+      if ((trapezoids[t].left_segment == trapezoids[tnext].left_segment) &&
+          (trapezoids[t].right_segment == trapezoids[tnext].right_segment)) /* good neighbours */
       {                                                   /* merge them */
         /* Use the upper node as the new node i.e. t */
 
@@ -1295,8 +1295,8 @@ static int add_segment(int segnum) {
         int td0, td1;
         if (((td0 = trapezoids[tmp_u].d0) > 0) &&
             ((td1 = trapezoids[tmp_u].d1) > 0)) { /* upward cusp */
-          if ((trapezoids[td0].rseg > 0) &&
-              !is_left_of(trapezoids[td0].rseg, &s.v1)) {
+          if ((trapezoids[td0].right_segment > 0) &&
+              !is_left_of(trapezoids[td0].right_segment, &s.v1)) {
             trapezoids[t].u0 = trapezoids[t].u1 = trapezoids[tn].u1 = -1;
             trapezoids[trapezoids[tn].u0].d1 = tn;
           } else /* cusp going leftwards */
@@ -1388,8 +1388,8 @@ static int add_segment(int segnum) {
         int td0, td1;
         if (((td0 = trapezoids[tmp_u].d0) > 0) &&
             ((td1 = trapezoids[tmp_u].d1) > 0)) { /* upward cusp */
-          if ((trapezoids[td0].rseg > 0) &&
-              !is_left_of(trapezoids[td0].rseg, &s.v1)) {
+          if ((trapezoids[td0].right_segment > 0) &&
+              !is_left_of(trapezoids[td0].right_segment, &s.v1)) {
             trapezoids[t].u0 = trapezoids[t].u1 = trapezoids[tn].u1 = -1;
             trapezoids[trapezoids[tn].u0].d1 = tn;
           } else {
@@ -1508,8 +1508,8 @@ static int add_segment(int segnum) {
         int td0, td1;
         if (((td0 = trapezoids[tmp_u].d0) > 0) &&
             ((td1 = trapezoids[tmp_u].d1) > 0)) { /* upward cusp */
-          if ((trapezoids[td0].rseg > 0) &&
-              !is_left_of(trapezoids[td0].rseg, &s.v1)) {
+          if ((trapezoids[td0].right_segment > 0) &&
+              !is_left_of(trapezoids[td0].right_segment, &s.v1)) {
             trapezoids[t].u0 = trapezoids[t].u1 = trapezoids[tn].u1 = -1;
             trapezoids[trapezoids[tn].u0].d1 = tn;
           } else {
@@ -1571,7 +1571,7 @@ static int add_segment(int segnum) {
       t = tnext;
     }
 
-    trapezoids[t_sav].rseg = trapezoids[tn_sav].lseg = segnum;
+    trapezoids[t_sav].right_segment = trapezoids[tn_sav].left_segment = segnum;
   } /* end-while */
 
   /* Now combine those trapezoids which share common segments. We can */
@@ -1655,14 +1655,14 @@ static int math_N(int n, int h) {
   int i;
   F64 v;
 
-  for (i = 0, v = (int)n; i < h; i++)
+  for (i = 0, v = n; i < h; i++)
     v = log2(v);
 
-  return (int)ceil((F64)1.0 * n / v);
+  return (int)ceil((F64)n / v);
 }
 
 /* Main routine to perform trapezoidation */
-static int construct_trapezoids(int nseg) {
+static int construct_trapezoids(int segment_count) {
   int i;
   int root, h;
 
@@ -1671,19 +1671,19 @@ static int construct_trapezoids(int nseg) {
 
   root = init_query_structure(choose_segment());
 
-  for (i = 1; i <= nseg; i++)
+  for (i = 1; i <= segment_count; i++)
     segments[i].root0 = segments[i].root1 = root;
 
-  for (h = 1; h <= math_logstar_n(nseg); h++) {
-    for (i = math_N(nseg, h - 1) + 1; i <= math_N(nseg, h); i++)
+  for (h = 1; h <= math_logstar_n(segment_count); h++) {
+    for (i = math_N(segment_count, h - 1) + 1; i <= math_N(segment_count, h); i++)
       add_segment(choose_segment());
 
     /* Find a new root for each of the segment endpoints */
-    for (i = 1; i <= nseg; i++)
+    for (i = 1; i <= segment_count; i++)
       find_new_roots(i);
   }
 
-  for (i = math_N(nseg, math_logstar_n(nseg)) + 1; i <= nseg; i++)
+  for (i = math_N(segment_count, math_logstar_n(segment_count)) + 1; i <= segment_count; i++)
     add_segment(choose_segment());
 
   return 0;

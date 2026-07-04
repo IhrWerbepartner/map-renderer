@@ -47,7 +47,7 @@ typedef struct contour {
 } Contour;
 
 typedef struct polygon {
-  U32 outside_coordinates;
+  S32 outside_coordinates;
   Slice inside_coordinates;
 } Polygon;
 
@@ -149,10 +149,6 @@ typedef struct JsonNode {
   struct JsonNode *prev; //  points to previous child
   struct JsonNode *next; // points to next child
 } JsonNode;
-
-static Arena a1 = {0};
-static Arena a2 = {0};
-Arena *arenas[2] = {&a1, &a2};
 
 #define JSON_REPORT_ERROR(msg, p)                                              \
   fprintf(stderr, "NXJSON PARSE ERROR (%d): " msg " at %s\n", __LINE__, p)

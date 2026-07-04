@@ -7,6 +7,11 @@
     S32 len, capacity;                                                         \
     type *data;                                                                \
   } typename;                                                                  \
+  typedef struct type##Slice type##Slice;                                      \
+  struct type##Slice {                                                         \
+    type *v;                                                                   \
+    S32 count;                                                                 \
+  };                                                                           \
                                                                                \
   typename typename##New(Arena *arena, S32 capacity) {                         \
     type *data = (type *)arena_alloc_align(                                    \
@@ -22,11 +27,12 @@
                                                                                \
   S32 typename##Length(typename *stack) { return stack ? stack->len : 0; }     \
                                                                                \
-  void typename##Push(typename *stack, type value) {                           \
-    if (!stack || stack->len >= stack->capacity) {                          \
+  S32 typename##Push(typename *stack, type value) {                            \
+    if (!stack || stack->len >= stack->capacity) {                             \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
     stack->data[stack->len++] = value;                                         \
+    return stack->len - 1;                                                     \
   }                                                                            \
                                                                                \
   type typename##Pop(typename *stck) {                                         \
@@ -37,4 +43,8 @@
     type value = stck->data[stck->len - 1];                                    \
     stck->len--;                                                               \
     return value;                                                              \
+  }                                                                            \
+                                                                               \
+  type##Slice type##SliceFromArray(typename *array) {                          \
+    return (type##Slice){.v = array->data, .count = array->len};          \
   }

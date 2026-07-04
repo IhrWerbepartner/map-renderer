@@ -1,4 +1,4 @@
-GEO_FILE=./samples/random-gps-tracks-100.geojson
+GEO_FILE=./samples/poly_test_2.json
 EXE_NAME= map-renderer
 EXE_NAME_UNOPTIMIZED= unoptimized-map-renderer
 CFLAGS= -Wextra -Wall -Wundef -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-default -Wswitch-enum -Wconversion 
@@ -30,3 +30,5 @@ stat: $(EXE_NAME)
 perf-record: $(EXE_NAME)
 	perf record -g ./$(EXE_NAME) $(GEO_FILE)
 
+clean:
+	rm $(EXE_NAME)

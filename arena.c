@@ -1,6 +1,7 @@
 #pragma once
 
 #include <assert.h>
+#include <stdalign.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -71,6 +72,11 @@ void *arena_alloc_align(Arena *a, size_t size, size_t align) {
 void *arena_alloc(Arena *a, size_t size) {
   return arena_alloc_align(a, size, DEFAULT_ALIGNMENT);
 }
+
+#define arena_alloc_array_aligned(a, T, c, align)                              \
+  (T *)arena_alloc_align((a), sizeof(T) * (c), (align))
+#define arena_alloc_array(a, T, c)                                             \
+  arena_alloc_array_aligned(a, T, c, Max(8, alignof(T)))
 
 void *arena_resize_align(Arena *a, void *old_memory, size_t old_size,
                          size_t new_size, size_t align) {
