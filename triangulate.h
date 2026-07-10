@@ -21,7 +21,7 @@ typedef struct {
 
 typedef struct {
   int left_segment, right_segment; /* two adjoining segments */
-  Coord2 hi, lo;  /* max/min y-values */
+  Coord2 hi, lo;                   /* max/min y-values */
   int u0, u1;
   int d0, d1;
   int sink;         /* pointer to corresponding in Q */
@@ -79,10 +79,10 @@ typedef struct {
 
 #define TRIANG_INFINITY 1 << 30
 #define C_EPS 1.11e-16 /* tolerance value: Used for making */
-                      /* all decisions about collinearity or */
-                      /* left/right of segment. Decrease */
-                      /* this value if the input points are */
-                      /* spaced very close together */
+                       /* all decisions about collinearity or */
+                       /* left/right of segment. Decrease */
+                       /* this value if the input points are */
+                       /* spaced very close together */
 
 #define S_LEFT 1 /* for merge-direction */
 #define S_RIGHT 2
@@ -247,24 +247,29 @@ static F64 get_angle(Coord2 *vp0, Coord2 *vpnext, Coord2 *vp1) {
 
 /* (v0, v1) is the new diagonal to be added to the polygon. Find which */
 /* chain to use and return the positions of v0 and v1 in p and q */
-static int get_vertex_positions(int v0, int v1, int *ip, int *iq) {
-  VertexChain *vp0, *vp1;
-  int i;
-  F64 angle, temp;
-  int tp, tq;
+// finds the segments with the smallest angle counterclockwise starting
+// from v0 and v1 respectively to the diagonal to be added.
+//     |  minimize this angle ->   \  /
+//    (v0)- - - - - - - - - - - - -(v1)
+//    / \ <- minimize this angle     |
 
-  vp0 = &vertex_chain[v0];
-  vp1 = &vertex_chain[v1];
+static int get_vertex_positions(int v0, int v1, int *ip, int *iq) {
+  int i;
+  F64 temp;
+  int tp = 0, tq = 0;
+
+  VertexChain *vp0 = &vertex_chain[v0];
+  VertexChain *vp1 = &vertex_chain[v1];
 
   /* p is identified as follows. Scan from (v0, v1) rightwards till */
   /* you hit the first segment starting from v0. That chain is the */
   /* chain of our interest */
 
-  angle = -4.0;
+  F64 angle = -4.0;
   for (i = 0; i < 4; i++) {
     if (vp0->vnext[i] <= 0)
       continue;
-    if ((temp = get_angle(&vp0->pt, &(vertex_chain[vp0->vnext[i]].pt),
+    if ((temp = get_angle(&vp0->pt, &vertex_chain[vp0->vnext[i]].pt,
                           &vp1->pt)) > angle) {
       angle = temp;
       tp = i;
@@ -296,24 +301,38 @@ static int get_vertex_positions(int v0, int v1, int *ip, int *iq) {
  * two polygons using the diagonal (v0, v1)
  */
 static int make_new_monotone_poly(int mcur, int v0, int v1) {
-  int p, q, ip, iq;
-  int mnew = newmon();
-  int i, j, nf0, nf1;
-  VertexChain *vp0, *vp1;
+  int ip, iq;
+  const int mnew = newmon();
 
-  vp0 = &vertex_chain[v0];
-  vp1 = &vertex_chain[v1];
+  VertexChain *vp0 = &vertex_chain[v0];
+  VertexChain *vp1 = &vertex_chain[v1];
 
   get_vertex_positions(v0, v1, &ip, &iq);
 
-  p = vp0->vpos[ip];
-  q = vp1->vpos[iq];
+  const int p = vp0->vpos[ip];
+  const int q = vp1->vpos[iq];
 
   /* At this stage, we have got the positions of v0 and v1 in the */
   /* desired chain. Now modify the linked lists */
+  // adds two new points into the linked list i, j and connects them to the old
+  // points which are p, q respectively.
+  // before:
+  // (p.prev)  (q.next)
+  //     |         |
+  //    (p)- - - -(q)
+  //     |         |
+  // (p.next)  (q.prev)
+  //
+  // after:
+  // (p.prev) (q.next)
+  //     |        |
+  //    (p)<---->(q) (p, i) and (q, j) are at the same point
+  //    (i)<---->(j)
+  //     |        |
+  // (i.next) (j.prev)
 
-  i = new_chain_element(); /* for the new list */
-  j = new_chain_element();
+  const int i = new_chain_element(); /* for the new list */
+  const int j = new_chain_element();
 
   monotone_chain[i].vnum = v0;
   monotone_chain[j].vnum = v1;
@@ -328,8 +347,8 @@ static int make_new_monotone_poly(int mcur, int v0, int v1) {
   monotone_chain[p].next = q;
   monotone_chain[q].prev = p;
 
-  nf0 = vp0->nextfree;
-  nf1 = vp1->nextfree;
+  const int nf0 = vp0->nextfree;
+  const int nf1 = vp1->nextfree;
 
   vp0->vnext[ip] = v1;
 
@@ -423,6 +442,12 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   if ((t->u0 <= 0) && (t->u1 <= 0)) {
     if ((t->d0 > 0) && (t->d1 > 0)) /* downward opening triangle */
     {
+      // connect v0 and v1
+      //      (v1)
+      //    /      \
+      //   /  (v0)  \
+      //  /  /    \
+
       v0 = trapezoids[t->d1].left_segment;
       v1 = t->left_segment;
       if (from == t->d1) {
@@ -446,6 +471,13 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   else if ((t->d0 <= 0) && (t->d1 <= 0)) {
     if ((t->u0 > 0) && (t->u1 > 0)) /* upward opening triangle */
     {
+      // connect v0 and v1
+      //    \      /
+      //     \    /
+      //   \  (v1)  /
+      //    \      /
+      //      (v0)
+
       v0 = t->right_segment;
       v1 = trapezoids[t->u0].right_segment;
       if (from == t->u1) {
@@ -469,6 +501,13 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   else if ((t->u0 > 0) && (t->u1 > 0)) {
     if ((t->d0 > 0) && (t->d1 > 0)) /* downward + upward cusps */
     {
+      // connect v0 and v1
+      //    \    /
+      //     (v1)
+      //      || <- to insert
+      //     (v0)
+      //    /    \
+
       v0 = trapezoids[t->d1].left_segment;
       v1 = trapezoids[t->u0].right_segment;
       retval = SP_2UP_2DN;
@@ -488,6 +527,11 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
       }
     } else /* only downward cusp */
     {
+      //  |     \    /
+      //  |      (v0)
+      //  |
+      // (v1)
+
       if (_equal_to(&t->lo, &segments[t->left_segment].v1)) {
         v0 = trapezoids[t->u0].right_segment;
         v1 = segments[t->left_segment].next;
@@ -507,6 +551,11 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
           traverse_polygon(mnew, t->u0, trnum, TR_FROM_DN);
         }
       } else {
+        //   \    /    |
+        //    (v1)     |
+        //             |
+        //            (v0)
+
         v0 = t->right_segment;
         v1 = trapezoids[t->u0].right_segment;
         retval = SP_2UP_RIGHT;
@@ -569,6 +618,10 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
     {
       if (_equal_to(&t->hi, &segments[t->left_segment].v0) &&
           _equal_to(&t->lo, &segments[t->right_segment].v0)) {
+        //    (v1)
+        //    /        |
+        //   /         |
+        //            (v0)
         v0 = t->right_segment;
         v1 = t->left_segment;
         retval = SP_SIMPLE_LRDN;
@@ -587,6 +640,8 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
         }
       } else if (_equal_to(&t->hi, &segments[t->right_segment].v1) &&
                  _equal_to(&t->lo, &segments[t->left_segment].v1)) {
+        // go to the segment end if they are at opposite of one another.
+        // same picture as above but with v1 of both segments
         v0 = segments[t->right_segment].next;
         v1 = segments[t->left_segment].next;
 
@@ -742,11 +797,7 @@ static int triangulate_single_polygon(int nvert, int posmax, int side,
     {
       if (CROSS(vertex_chain[v].pt, vertex_chain[rc[ri - 1]].pt,
                 vertex_chain[rc[ri]].pt) > 0) { /* convex corner: cut if off */
-        TriangleArrayPush(op, (Triangle){
-                                  rc[ri - 1],
-                                  rc[ri],
-                                  v,
-                              });
+        TriangleArrayPush(op, (Triangle){rc[ri - 1], rc[ri], v});
         ri--;
       } else /* non-convex */
       {      /* add v to the chain */
@@ -764,11 +815,7 @@ static int triangulate_single_polygon(int nvert, int posmax, int side,
   } /* end-while */
 
   /* reached the bottom vertex. Add in the triangle formed */
-  TriangleArrayPush(op, (Triangle){
-                            rc[ri - 1],
-                            rc[ri],
-                            v,
-                        });
+  TriangleArrayPush(op, (Triangle){rc[ri - 1], rc[ri], v});
   ri--;
 
   return 0;
@@ -1021,8 +1068,9 @@ static int merge_trapezoids(int segnum, int tfirst, int tlast, int side) {
 
     if (cond) {
       if ((trapezoids[t].left_segment == trapezoids[tnext].left_segment) &&
-          (trapezoids[t].right_segment == trapezoids[tnext].right_segment)) /* good neighbours */
-      {                                                   /* merge them */
+          (trapezoids[t].right_segment ==
+           trapezoids[tnext].right_segment)) /* good neighbours */
+      {                                      /* merge them */
         /* Use the upper node as the new node i.e. t */
 
         ptnext = query_structure[trapezoids[tnext].sink].parent;
@@ -1164,14 +1212,14 @@ static int add_segment(int segnum) {
     trapezoids[tl].u0 = tu;
     trapezoids[tl].u1 = 0;
 
-    if (((tmp_d = trapezoids[tl].d0) > 0) && (trapezoids[tmp_d].u0 == tu))
+    if ((tmp_d = trapezoids[tl].d0) > 0 && trapezoids[tmp_d].u0 == tu)
       trapezoids[tmp_d].u0 = tl;
-    if (((tmp_d = trapezoids[tl].d0) > 0) && (trapezoids[tmp_d].u1 == tu))
+    if ((tmp_d = trapezoids[tl].d0) > 0 && trapezoids[tmp_d].u1 == tu)
       trapezoids[tmp_d].u1 = tl;
 
-    if (((tmp_d = trapezoids[tl].d1) > 0) && (trapezoids[tmp_d].u0 == tu))
+    if ((tmp_d = trapezoids[tl].d1) > 0 && trapezoids[tmp_d].u0 == tu)
       trapezoids[tmp_d].u0 = tl;
-    if (((tmp_d = trapezoids[tl].d1) > 0) && (trapezoids[tmp_d].u1 == tu))
+    if ((tmp_d = trapezoids[tl].d1) > 0 && trapezoids[tmp_d].u1 == tu)
       trapezoids[tmp_d].u1 = tl;
 
     /* Now update the query structure and obtain the sinks for the */
@@ -1210,7 +1258,7 @@ static int add_segment(int segnum) {
 
   t = tfirst; /* topmost trapezoid */
 
-  while ((t > 0) &&
+  while (t > 0 &&
          _greater_than_equal_to(&trapezoids[t].lo, &trapezoids[tlast].lo))
   /* traverse from top to bot */
   {
@@ -1257,10 +1305,10 @@ static int add_segment(int segnum) {
     /* two resulting trapezoids t and tn as the upper neighbours of */
     /* the sole lower trapezoid */
 
-    else if ((trapezoids[t].d0 > 0) &&
-             (trapezoids[t].d1 <= 0)) { /* Only one trapezoid below */
-      if ((trapezoids[t].u0 > 0) &&
-          (trapezoids[t].u1 > 0)) {  /* continuation of a chain from abv. */
+    if (trapezoids[t].d0 > 0 &&
+        trapezoids[t].d1 <= 0) { /* Only one trapezoid below */
+      if (trapezoids[t].u0 > 0 &&
+          trapezoids[t].u1 > 0) {    /* continuation of a chain from abv. */
         if (trapezoids[t].usave > 0) /* three upper neighbours */
         {
           if (trapezoids[t].uside == S_LEFT) {
@@ -1292,10 +1340,10 @@ static int add_segment(int segnum) {
         }
       } else { /* fresh seg. or upward cusp */
         int tmp_u = trapezoids[t].u0;
-        int td0, td1;
-        if (((td0 = trapezoids[tmp_u].d0) > 0) &&
-            ((td1 = trapezoids[tmp_u].d1) > 0)) { /* upward cusp */
-          if ((trapezoids[td0].right_segment > 0) &&
+        int td0;
+        if ((td0 = trapezoids[tmp_u].d0) > 0 &&
+            trapezoids[tmp_u].d1 > 0) { /* upward cusp */
+          if (trapezoids[td0].right_segment > 0 &&
               !is_left_of(trapezoids[td0].right_segment, &s.v1)) {
             trapezoids[t].u0 = trapezoids[t].u1 = trapezoids[tn].u1 = -1;
             trapezoids[trapezoids[tn].u0].d1 = tn;
@@ -1320,7 +1368,7 @@ static int add_segment(int segnum) {
         else
           tmptriseg = segments[segnum].next;
 
-        if ((tmptriseg > 0) && is_left_of(tmptriseg, &s.v0)) {
+        if (tmptriseg > 0 && is_left_of(tmptriseg, &s.v0)) {
           /* L-R downward cusp */
           trapezoids[trapezoids[t].d0].u0 = t;
           trapezoids[tn].d0 = trapezoids[tn].d1 = -1;
@@ -1330,8 +1378,8 @@ static int add_segment(int segnum) {
           trapezoids[t].d0 = trapezoids[t].d1 = -1;
         }
       } else {
-        if ((trapezoids[trapezoids[t].d0].u0 > 0) &&
-            (trapezoids[trapezoids[t].d0].u1 > 0)) {
+        if (trapezoids[trapezoids[t].d0].u0 > 0 &&
+            trapezoids[trapezoids[t].d0].u1 > 0) {
           if (trapezoids[trapezoids[t].d0].u0 == t) /* passes thru LHS */
           {
             trapezoids[trapezoids[t].d0].usave =
@@ -1350,10 +1398,10 @@ static int add_segment(int segnum) {
       t = trapezoids[t].d0;
     }
 
-    else if ((trapezoids[t].d0 <= 0) &&
-             (trapezoids[t].d1 > 0)) { /* Only one trapezoid below */
-      if ((trapezoids[t].u0 > 0) &&
-          (trapezoids[t].u1 > 0)) {  /* continuation of a chain from abv. */
+    else if (trapezoids[t].d0 <= 0 &&
+             trapezoids[t].d1 > 0) { /* Only one trapezoid below */
+      if (trapezoids[t].u0 > 0 &&
+          trapezoids[t].u1 > 0) {    /* continuation of a chain from abv. */
         if (trapezoids[t].usave > 0) /* three upper neighbours */
         {
           if (trapezoids[t].uside == S_LEFT) {
@@ -1385,10 +1433,10 @@ static int add_segment(int segnum) {
         }
       } else { /* fresh seg. or upward cusp */
         int tmp_u = trapezoids[t].u0;
-        int td0, td1;
-        if (((td0 = trapezoids[tmp_u].d0) > 0) &&
-            ((td1 = trapezoids[tmp_u].d1) > 0)) { /* upward cusp */
-          if ((trapezoids[td0].right_segment > 0) &&
+        int td0;
+        if ((td0 = trapezoids[tmp_u].d0) > 0 &&
+            trapezoids[tmp_u].d1 > 0) { /* upward cusp */
+          if (trapezoids[td0].right_segment > 0 &&
               !is_left_of(trapezoids[td0].right_segment, &s.v1)) {
             trapezoids[t].u0 = trapezoids[t].u1 = trapezoids[tn].u1 = -1;
             trapezoids[trapezoids[tn].u0].d1 = tn;
@@ -1406,12 +1454,13 @@ static int add_segment(int segnum) {
       if (FP_EQUAL(trapezoids[t].lo.y, trapezoids[tlast].lo.y) &&
           FP_EQUAL(trapezoids[t].lo.x, trapezoids[tlast].lo.x) &&
           tribot) { /* bottom forms a triangle */
-        int tmpseg = 0;
 
         if (is_swapped)
           tmptriseg = segments[segnum].prev;
         else
           tmptriseg = segments[segnum].next;
+        int tmpseg = 0; // TODO: should this be tmptriseg? as this makes the
+                        // branch below unreachable
 
         if ((tmpseg > 0) && is_left_of(tmpseg, &s.v0)) {
           /* L-R downward cusp */
@@ -1449,14 +1498,12 @@ static int add_segment(int segnum) {
     else {
       F64 y0, yt;
       Coord2 tmppt;
-      int tnext, i_d0, i_d1;
+      int tnext, i_d0;
 
-      i_d0 = i_d1 = FALSE;
+      i_d0 = FALSE;
       if (FP_EQUAL(trapezoids[t].lo.y, s.v0.y)) {
         if (trapezoids[t].lo.x > s.v0.x)
           i_d0 = TRUE;
-        else
-          i_d1 = TRUE;
       } else {
         tmppt.y = y0 = trapezoids[t].lo.y;
         yt = (y0 - s.v0.y) / (s.v1.y - s.v0.y);
@@ -1464,15 +1511,13 @@ static int add_segment(int segnum) {
 
         if (_less_than(&tmppt, &trapezoids[t].lo))
           i_d0 = TRUE;
-        else
-          i_d1 = TRUE;
       }
 
       /* check continuity from the top so that the lower-neighbour */
       /* values are properly filled for the upper trapezoid */
 
-      if ((trapezoids[t].u0 > 0) &&
-          (trapezoids[t].u1 > 0)) {  /* continuation of a chain from abv. */
+      if (trapezoids[t].u0 > 0 &&
+          trapezoids[t].u1 > 0) {    /* continuation of a chain from abv. */
         if (trapezoids[t].usave > 0) /* three upper neighbours */
         {
           if (trapezoids[t].uside == S_LEFT) {
@@ -1505,9 +1550,9 @@ static int add_segment(int segnum) {
         }
       } else { /* fresh seg. or upward cusp */
         int tmp_u = trapezoids[t].u0;
-        int td0, td1;
-        if (((td0 = trapezoids[tmp_u].d0) > 0) &&
-            ((td1 = trapezoids[tmp_u].d1) > 0)) { /* upward cusp */
+        int td0;
+        if ((td0 = trapezoids[tmp_u].d0) > 0 &&
+            trapezoids[tmp_u].d1 > 0) { /* upward cusp */
           if ((trapezoids[td0].right_segment > 0) &&
               !is_left_of(trapezoids[td0].right_segment, &s.v1)) {
             trapezoids[t].u0 = trapezoids[t].u1 = trapezoids[tn].u1 = -1;
@@ -1675,7 +1720,8 @@ static int construct_trapezoids(int segment_count) {
     segments[i].root0 = segments[i].root1 = root;
 
   for (h = 1; h <= math_logstar_n(segment_count); h++) {
-    for (i = math_N(segment_count, h - 1) + 1; i <= math_N(segment_count, h); i++)
+    for (i = math_N(segment_count, h - 1) + 1; i <= math_N(segment_count, h);
+         i++)
       add_segment(choose_segment());
 
     /* Find a new root for each of the segment endpoints */
@@ -1683,7 +1729,8 @@ static int construct_trapezoids(int segment_count) {
       find_new_roots(i);
   }
 
-  for (i = math_N(segment_count, math_logstar_n(segment_count)) + 1; i <= segment_count; i++)
+  for (i = math_N(segment_count, math_logstar_n(segment_count)) + 1;
+       i <= segment_count; i++)
     add_segment(choose_segment());
 
   return 0;
@@ -1722,8 +1769,8 @@ static int initialise(int n) {
  * this routine
  */
 
-int triangulate_polygon(int num_contours, int verts_per_contour[], Coord2 *vertices,
-                        TriangleArray *triangles) {
+int triangulate_polygon(int num_contours, int verts_per_contour[],
+                        Coord2 *vertices, TriangleArray *triangles) {
   int i;
   int nmonpoly, contour, npoints;
   int n;

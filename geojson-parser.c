@@ -834,6 +834,16 @@ void draw_polygons(GeoJson *coords, Camera2D camera) {
     // reversed the coords the output we get is in clockwise order, therefore
     // change b, and c.
     DrawTriangle(a, c, b, BLUE);
+    DrawLineEx(a, b, 3, RED);
+    DrawLineEx(a, c, 3, RED);
+    DrawLineEx(b, c, 3, RED);
+    char buf[8] = {0};
+    sprintf(buf, "%d", t.a);
+    DrawText(buf, (int)a.x, (int)a.y, 50, RED);
+    sprintf(buf, "%d", t.b);
+    DrawText(buf, (int)b.x, (int)b.y, 50, RED);
+    sprintf(buf, "%d", t.c);
+    DrawText(buf, (int)c.x, (int)c.y, 50, RED);
     DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f, %03.05f][%03.05f, "
               "%03.05f]\n",
               a.x, a.y, b.x, b.y, c.x, c.y)

@@ -45,6 +45,13 @@
     return value;                                                              \
   }                                                                            \
                                                                                \
+  type typename##Peek(typename *stck) {                                        \
+    if (!stck || stck->len == 0) {                                             \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+    return stck->data[stck->len - 1];                                          \
+  }                                                                            \
+                                                                               \
   type##Slice type##SliceFromArray(typename *array) {                          \
-    return (type##Slice){.v = array->data, .count = array->len};          \
+    return (type##Slice){.v = array->data, .count = array->len};               \
   }
