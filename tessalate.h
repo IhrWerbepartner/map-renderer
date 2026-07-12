@@ -153,6 +153,7 @@ static void ValidateQueryTrapezoidSegmentStructures(QueryNodeSlice qs,
                                                     TrapezoidSlice ts,
                                                     SegmentSlice segments,
                                                     Coord2Slice vertices);
+static void ValidateMonotoneChains(const MonotoneChainSlice chains);
 #endif
 
 // computes the triangulation of the coordinates which are partitioned by
@@ -171,6 +172,7 @@ void TessalatePolygon(TriangleArray *triangles, const Coord2Slice coords,
   MonotoneChainArray monotone_polygon_chains =
       MonotoneChainArrayNew(scratch.arena, 4 * coords.count);
   S32Array visited_trapezoids = S32ArrayNew(scratch.arena, 4 * coords.count);
+  visited_trapezoids.len = visited_trapezoids.capacity;
   VertexChainArray vertex_chains =
       VertexChainArrayNew(scratch.arena, coords.count);
   S32Array monotone_chain_start_vertex =
@@ -367,6 +369,8 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
                                  S32Array *monotone_chain_start_vertex) {
   /* Initialize the mon data-structure and start spanning all the */
   /* trapezoids within the polygon */
+  MonotoneChainArrayPush(monotone_polygon_chains, (MonotoneChain) {0});
+  VertexChainArrayPush(vertex_chains, (VertexChain) {0});
   for (S32 i = 1; i < segments.count; i++) {
     MonotoneChainArrayPush(monotone_polygon_chains,
                            (MonotoneChain){.prev = segments.v[i].prev,
@@ -378,9 +382,12 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
                                        .vertex_index_in_monotone_chain[0] = i,
                                        .next_free = 1});
   }
+#ifdef DEBUG
+  ValidateMonotoneChains(MonotoneChainSliceFromArray(monotone_polygon_chains));
+#endif
 
-  S32ArrayPush(monotone_chain_start_vertex,
-               1); // position of any vertex in the first chain
+  // position of a vertex in the first chain
+  S32ArrayPush(monotone_chain_start_vertex, 1);
 
   /* First locate a trapezoid which lies inside the polygon */
   /* and which is triangular */
@@ -425,12 +432,12 @@ DeclFixedArray(TraversalArray, Traversal);
 // trapezoid we entered this one, as this is important for winding information.
 static void TraversePolygon(VertexChainArray *vertex_chains,
                             MonotoneChainArray *monotone_polygon_chains,
-                            TrapezoidSlice trapezoids, SegmentSlice segments,
-                            Coord2Slice vertices, S32Slice visited_trapezoids,
+                            const TrapezoidSlice trapezoids, const SegmentSlice segments,
+                            const Coord2Slice vertices, S32Slice visited_trapezoids,
                             S32Array *monotone_chain_start_vertex,
                             S32 current_monotone, S32 current_trapezoid_index,
                             S32 traversed_from_trapezoid, TraversalDirection dir) {
-  Temp_Arena_Memory scratch = GetScratch();
+  const Temp_Arena_Memory scratch = GetScratch();
 
   // build a stack of trapezoids we need to traverse. Push them in the reverse
   // order one would call a recursive function s.t. the current_monotone is on
@@ -439,6 +446,9 @@ static void TraversePolygon(VertexChainArray *vertex_chains,
   TraversalArrayPush(&stack, (Traversal){current_monotone, current_trapezoid_index,
                                          traversed_from_trapezoid, dir});
   while (TraversalArrayLength(&stack) > 0) {
+#ifdef DEBUG
+    ValidateMonotoneChains(MonotoneChainSliceFromArray(monotone_polygon_chains));
+#endif
     const Traversal traversal = TraversalArrayPop(&stack);
     const S32 current_trapezoid = traversal.current_trapezoid;
     if (!current_trapezoid || visited_trapezoids.v[current_trapezoid]) {
@@ -775,11 +785,13 @@ static void TraversePolygon(VertexChainArray *vertex_chains,
       }
     }
   }
+#ifdef DEBUG
+  ValidateMonotoneChains(MonotoneChainSliceFromArray(monotone_polygon_chains));
+#endif
   temp_arena_memory_end(scratch);
 }
 
-// compute the diamond angle respective to the x axis.
-// see
+// compute the diamond angle respective to the x axis. see
 // https://www.freesteel.co.uk/wpblog/2009/06/05/encoding-2d-angles-without-trigonometry
 static F64 DiamondAngle(F64 dx, F64 dy) {
   if (dy >= 0)
@@ -923,6 +935,9 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
 
   monotone_chain_start_vertex->data[current_monotone_polygon] = p;
   monotone_chain_start_vertex->data[new_monotone] = i;
+#ifdef DEBUG
+  ValidateMonotoneChains(MonotoneChainSliceFromArray(monotone_polygon_chains));
+#endif
   return new_monotone;
 }
 
@@ -2070,5 +2085,14 @@ static void ValidateQueryTrapezoidSegmentStructures(
     }
     ASSERT(found_min, "unable to find min_y for trapezoid %d", i)
     ASSERT(found_max, "unable to find max_y for trapezoid %d", i)
+  }
+}
+
+static void ValidateMonotoneChains(const MonotoneChainSlice chains) {
+  for (S32 i = 1; i < chains.count; i += 1) {
+    const S32 i_prev = chains.v[i].prev;
+    const S32 i_next = chains.v[i].next;
+    ASSERT(i == chains.v[i_prev].next, "Prev and next of %d and %d disagree", i_prev, i)
+    ASSERT(i == chains.v[i_next].prev, "Next and prev of %d and %d disagree", i_next, i)
   }
 }
