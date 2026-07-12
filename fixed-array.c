@@ -29,6 +29,7 @@
                                                                                \
   S32 typename##Push(typename *stack, type value) {                            \
     if (!stack || stack->len >= stack->capacity) {                             \
+      fprintf(stderr, "Array overflow, capacity: %d reached", stack->capacity);\
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
     stack->data[stack->len++] = value;                                         \

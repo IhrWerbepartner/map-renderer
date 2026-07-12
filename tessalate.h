@@ -384,7 +384,7 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
 
   /* First locate a trapezoid which lies inside the polygon */
   /* and which is triangular */
-  for (S32 i = 0; i < trapezoids.count; i++) {
+  for (S32 i = 1; i < trapezoids.count; i++) {
     Trapezoid t = trapezoids.v[i];
     if (t.is_valid && t.left_segment && t.right_segment) {
       /* triangle */
@@ -428,25 +428,26 @@ static void TraversePolygon(VertexChainArray *vertex_chains,
                             TrapezoidSlice trapezoids, SegmentSlice segments,
                             Coord2Slice vertices, S32Slice visited_trapezoids,
                             S32Array *monotone_chain_start_vertex,
-                            S32 current_monotone, S32 current_trapezoid,
-                            S32 traversed_from, TraversalDirection dir) {
-  if (!current_trapezoid || visited_trapezoids.v[current_trapezoid])
-    // nothing to do
-    return;
-
-  visited_trapezoids.v[current_trapezoid] = true;
-
+                            S32 current_monotone, S32 current_trapezoid_index,
+                            S32 traversed_from_trapezoid, TraversalDirection dir) {
   Temp_Arena_Memory scratch = GetScratch();
 
   // build a stack of trapezoids we need to traverse. Push them in the reverse
   // order one would call a recursive function s.t. the current_monotone is on
   // top of the stack and gets processed first.
   TraversalArray stack = TraversalArrayNew(scratch.arena, trapezoids.count);
-  TraversalArrayPush(&stack, (Traversal){current_monotone, current_trapezoid,
-                                         traversed_from, dir});
+  TraversalArrayPush(&stack, (Traversal){current_monotone, current_trapezoid_index,
+                                         traversed_from_trapezoid, dir});
   while (TraversalArrayLength(&stack) > 0) {
-    Traversal traversal = TraversalArrayPop(&stack);
-    Trapezoid t = trapezoids.v[traversal.current_trapezoid];
+    const Traversal traversal = TraversalArrayPop(&stack);
+    const S32 current_trapezoid = traversal.current_trapezoid;
+    if (!current_trapezoid || visited_trapezoids.v[current_trapezoid]) {
+      continue;
+    }
+    const Trapezoid t = trapezoids.v[current_trapezoid];
+    const S32 traversed_from = traversal.traversed_from;
+    visited_trapezoids.v[current_trapezoid] = true;
+
     /* We have much more information available here. */
     /* rseg: goes upwards   */
     /* lseg: goes downwards */
@@ -491,9 +492,7 @@ static void TraversePolygon(VertexChainArray *vertex_chains,
         TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
                                                current_trapezoid, DOWN});
       }
-    }
-
-    if (!(t.down0 || t.down1)) {
+    } else if (!(t.down0 || t.down1)) {
       if (t.up0 && t.up1) /* upward opening triangle */
       {
         /* connect v0 and v1
@@ -528,9 +527,7 @@ static void TraversePolygon(VertexChainArray *vertex_chains,
         TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
                                                current_trapezoid, UP});
       }
-    }
-
-    if (t.up0 && t.up1) {
+    } else if (t.up0 && t.up1) {
       if (t.down0 && t.down1) {
         /* downward + upward cusps
          *  connect v0 and v1
@@ -643,8 +640,7 @@ static void TraversePolygon(VertexChainArray *vertex_chains,
           }
         }
       }
-    }
-    if (t.up0 || t.up1) /* no downward cusp */
+    } else if (t.up0 || t.up1) /* no downward cusp */
     {
       if (t.down0 && t.down1) /* only upward cusp */
       {
@@ -940,9 +936,10 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
 #ifdef DEBUG
   ValidateQueryStructure(QueryNodeSliceFromArray(query_structure));
 #endif
+  const S32 segment_count = segments->len - 1;
   S32 query_root = InitQueryStructure(query_structure, vertices, trapezoids,
                                       segments, RandomSegment(permutation));
-  for (S32 i = 1; i <= segments->len; i++) {
+  for (S32 i = 1; i <= segment_count; i++) {
     segments->data[i].root0 = segments->data[i].root1 = query_root;
   }
 #ifdef DEBUG
@@ -952,8 +949,8 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
       vertices);
 #endif
 
-  for (S32 h = 1; h <= MathLogStar(segments->len); h++) {
-    for (S32 i = MathN(segments->len, h - 1) + 1; i <= MathN(segments->len, h);
+  for (S32 h = 1; h <= MathLogStar(segment_count); h++) {
+    for (S32 i = MathN(segment_count, h - 1) + 1; i <= MathN(segment_count, h);
          i++) {
 #ifdef DEBUG
       ValidateQueryTrapezoidSegmentStructures(
@@ -972,7 +969,7 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
     }
 
     /* Find a new root for each of the segment endpoints */
-    for (S32 i = 1; i <= segments->len; i++) {
+    for (S32 i = 1; i <= segment_count; i++) {
       Segment *s = &segments->data[i];
 
       if (!s->is_inserted) {
@@ -995,8 +992,8 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
       vertices);
 #endif
 
-  for (S32 i = MathN(segments->len, MathLogStar(segments->len)) + 1;
-       i <= segments->len; i++) {
+  for (S32 i = MathN(segment_count, MathLogStar(segment_count)) + 1;
+       i <= segment_count; i++) {
 #ifdef DEBUG
     ValidateQueryTrapezoidSegmentStructures(
         QueryNodeSliceFromArray(query_structure),
@@ -1132,7 +1129,6 @@ static S32 AddVertex(QueryNodeArray *query_structure, Coord2Slice vertices,
   // update the existing node (old sink)
   query_structure->data[old_sink].node_type = Y;
   query_structure->data[old_sink].yval = vertices.v[v0];
-  query_structure->data[old_sink].segment = segment;
   query_structure->data[old_sink].left = lower_sink_node;
   query_structure->data[old_sink].right = upper_sink_node;
 
@@ -1774,11 +1770,13 @@ static void GeneratePermutation(S32Array *permutation) {
 
 // selects the next segment from the permutation array
 static S32 RandomSegment(S32Array *permutation) {
-  S32 segment_index = S32ArrayPop(permutation);
+  if (permutation->len > 1) {
+    const S32 segment_index = S32ArrayPop(permutation);
 #ifdef DEBUG
-  fprintf(stderr, "choose_segment: %d\n", segment_index);
+    fprintf(stderr, "choose_segment: %d\n", segment_index);
 #endif
-  return segment_index;
+    return segment_index;
+  }
 }
 
 // computes log^*(n) (iterative logarithm)
