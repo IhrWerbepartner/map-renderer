@@ -11,10 +11,12 @@
   exit(EXIT_FAILURE);
 
 #define ASSERT(expr, ...)                                                      \
-  if (!(expr)) {                                                               \
-    fprintf(stderr, __VA_ARGS__);                                              \
-    exit(EXIT_FAILURE);                                                        \
-  }
+  do {                                                                         \
+    if (!(expr)) {                                                             \
+      fprintf(stderr, __VA_ARGS__);                                            \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+  } while (0);
 
 #define Min(A, B) (((A) < (B)) ? (A) : (B))
 #define Max(A, B) (((A) > (B)) ? (A) : (B))
