@@ -477,12 +477,12 @@ Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
   }
   return (Coord2){
       .x = x_coordinate->num.dbl_value,
-      .y = -y_coordinate->num.dbl_value,
+      .y = y_coordinate->num.dbl_value,
   };
 }
 
-// iterate backwards over the coordinates omitting the first one as it is
-// identical to the last input: [a, b, c, d, e] returns [e, d, c, b]
+// iterate over the coordinates omitting the last one as it is
+// identical to the first. input: [a, b, c, d, e] returns [a, b, c, d]
 void contour_from_json_array(const JsonNode *coordinates,
                              Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
@@ -492,10 +492,10 @@ void contour_from_json_array(const JsonNode *coordinates,
     ERROR_MSG("invalid contour with: %d coordinates\n",
               coordinates->children.length)
   }
-  const JsonNode *point_coords = coordinates->children.last;
-  while (point_coords != NULL && point_coords != coordinates->children.first) {
+  const JsonNode *point_coords = coordinates->children.first;
+  while (point_coords != NULL && point_coords != coordinates->children.last) {
     Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
-    point_coords = point_coords->prev;
+    point_coords = point_coords->next;
   }
 }
 
@@ -812,8 +812,8 @@ void draw_line_strings(const GeoJson *coords, Camera2D camera,
 }
 void draw_multi_line_strings(GeoJson *coords, Camera2D camera) {
   // -------------------- MULTI LINE STRINGS -----------------------
-  (void) coords;
-  (void) camera;
+  (void)coords;
+  (void)camera;
 }
 
 void draw_polygons(const GeoJson *coords, Camera2D camera) {
@@ -829,10 +829,7 @@ void draw_polygons(const GeoJson *coords, Camera2D camera) {
     Vector2 c =
         GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.c]), camera);
 
-    // we need to specify the triangle in counter-clockwise order but because we
-    // reversed the coords the output we get is in clockwise order, therefore
-    // change b, and c.
-    DrawTriangle(a, c, b, (Color){0, 0, 255, 100});
+    DrawTriangle(a, b, c, (Color){0, 0, 255, 100});
     DrawLineEx(a, b, 3, RED);
     DrawLineEx(a, c, 3, RED);
     DrawLineEx(b, c, 3, RED);

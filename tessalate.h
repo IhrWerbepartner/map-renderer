@@ -45,6 +45,10 @@ typedef struct {
   bool is_valid;
 } Trapezoid;
 
+DeclFixedArray(SegmentArray, Segment);
+DeclFixedArray(QueryNodeArray, QueryNode);
+DeclFixedArray(TrapezoidArray, Trapezoid);
+
 // Circularly linked list describing the monotone polygon
 typedef struct {
   S32 vertex;
@@ -59,6 +63,20 @@ typedef struct {
   S32 next_free;
 } VertexChain;
 
+DeclFixedArray(MonotoneChainArray, MonotoneChain);
+DeclFixedArray(VertexChainArray, VertexChain);
+
+typedef struct TraversalInfo TraversalInfo;
+struct TraversalInfo {
+  VertexChainArray *vertex_chains;
+  MonotoneChainArray *monotone_polygon_chains;
+  const TrapezoidSlice trapezoids;
+  const SegmentSlice segments;
+  const Coord2Slice vertices;
+  S32Slice visited_trapezoids;
+  S32Array *monotone_chain_start_vertex;
+};
+
 typedef enum TraversalDirection TraversalDirection;
 enum TraversalDirection {
   UP,
@@ -70,12 +88,6 @@ enum MonotoneBaseSide {
   BASE_LEFT,
   BASE_RIGHT,
 };
-
-DeclFixedArray(SegmentArray, Segment);
-DeclFixedArray(QueryNodeArray, QueryNode);
-DeclFixedArray(TrapezoidArray, Trapezoid);
-DeclFixedArray(MonotoneChainArray, MonotoneChain);
-DeclFixedArray(VertexChainArray, VertexChain);
 
 #define TRIANGULATE_INFINITY (1 << 30)
 #define COORD2_MINUS_INFINITY                                                  \
@@ -118,13 +130,9 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
                                  SegmentSlice segments, Coord2Slice vertices,
                                  S32Slice visited_trapezoids,
                                  S32Array *monotone_chain_start_vertex);
-static void TraversePolygon(VertexChainArray *vertex_chains,
-                            MonotoneChainArray *monotone_polygon_chains,
-                            TrapezoidSlice trapezoids, SegmentSlice segments,
-                            Coord2Slice vertices, S32Slice visited_trapezoids,
-                            S32Array *monotone_chain_start_vertex,
-                            S32 current_monotone, S32 current_trapezoid,
-                            S32 traversed_from, TraversalDirection dir);
+static void TraversePolygon(TraversalInfo *traversal_info, S32 current_monotone,
+                            S32 current_trapezoid, S32 traversed_from,
+                            TraversalDirection dir);
 static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
                                   MonotoneChainArray *monotone_polygon_chains,
                                   S32Array *monotone_chain_start_vertex,
@@ -353,16 +361,17 @@ static void TriangulateSingleMonotonePolygon(VertexChainSlice vertex_chains,
     endv = monotone_chains.v[y_max_index].vertex;
   }
 
-  while ((v != endv) || reflex_chain.len > 2) {
+  while (v != endv || reflex_chain.len > 2) {
     if (reflex_chain.len > 1 &&
         CROSS(vertex_chains.v[v].pt,
               vertex_chains.v[reflex_chain.data[reflex_chain.len - 2]].pt,
-              vertex_chains.v[S32ArrayPeek(&reflex_chain)].pt) > 0) {
+              vertex_chains.v[reflex_chain.data[reflex_chain.len - 1]].pt) >
+            0) {
       // convex corner: cut if off
-      S32 v2 = S32ArrayPop(&reflex_chain);
-      S32 v1 = S32ArrayPop(&reflex_chain);
+      const S32 v2 = S32ArrayPop(&reflex_chain);
+      const S32 v1 = S32ArrayPop(&reflex_chain);
       TriangleArrayPush(triangles, (Triangle){v1, v2, v});
-      S32ArrayPush(&reflex_chain, v2);
+      S32ArrayPush(&reflex_chain, v1);
     } else { // non-convex or reflex-chain empty: add v to the chain
       S32ArrayPush(&reflex_chain, v);
       vpos = monotone_chains.v[vpos].next;
@@ -418,16 +427,20 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
         if (Coord2GreaterThan(vertices.v[segments.v[t.right_segment].v1],
                               vertices.v[segments.v[t.right_segment].v0])) {
           if (trapezoids.v[i].up0) {
-            TraversePolygon(vertex_chains, monotone_polygon_chains, trapezoids,
-                            segments, vertices, visited_trapezoids,
-                            monotone_chain_start_vertex, 0, i,
-                            trapezoids.v[i].up0, DOWN);
+            TraversePolygon(&(TraversalInfo){vertex_chains,
+                                             monotone_polygon_chains,
+                                             trapezoids, segments, vertices,
+                                             visited_trapezoids,
+                                             monotone_chain_start_vertex},
+                            0, i, trapezoids.v[i].up0, DOWN);
           }
           if (trapezoids.v[i].down0) {
-            TraversePolygon(vertex_chains, monotone_polygon_chains, trapezoids,
-                            segments, vertices, visited_trapezoids,
-                            monotone_chain_start_vertex, 0, i,
-                            trapezoids.v[i].down0, UP);
+            TraversePolygon(&(TraversalInfo){vertex_chains,
+                                             monotone_polygon_chains,
+                                             trapezoids, segments, vertices,
+                                             visited_trapezoids,
+                                             monotone_chain_start_vertex},
+                            0, i, trapezoids.v[i].down0, UP);
           }
           break;
         }
@@ -436,378 +449,307 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
   }
 }
 
-typedef struct Traversal Traversal;
-struct Traversal {
-  S32 current_monotone_polygon;
-  S32 current_trapezoid;
-  S32 traversed_from;
-  TraversalDirection dir;
-};
-DeclFixedArray(TraversalArray, Traversal);
-
 // recursively visit all the trapezoids, we need to remember from which
 // trapezoid we entered this one, as this is important for winding information.
-static void
-TraversePolygon(VertexChainArray *vertex_chains,
-                MonotoneChainArray *monotone_polygon_chains,
-                const TrapezoidSlice trapezoids, const SegmentSlice segments,
-                const Coord2Slice vertices, S32Slice visited_trapezoids,
-                S32Array *monotone_chain_start_vertex, S32 current_monotone,
-                S32 current_trapezoid_index, S32 traversed_from_trapezoid,
-                TraversalDirection dir) {
-  const Temp_Arena_Memory scratch = GetScratch();
-
-  // build a stack of trapezoids we need to traverse. Push them in the reverse
-  // order one would call a recursive function s.t. the current_monotone is on
-  // top of the stack and gets processed first.
-  TraversalArray stack = TraversalArrayNew(scratch.arena, trapezoids.count);
-  TraversalArrayPush(&stack,
-                     (Traversal){current_monotone, current_trapezoid_index,
-                                 traversed_from_trapezoid, dir});
-  while (TraversalArrayLength(&stack) > 0) {
+static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
+                            S32 current_trapezoid, S32 traversed_from,
+                            TraversalDirection dir) {
 #ifdef DEBUG
-    ValidateMonotoneChains(
-        MonotoneChainSliceFromArray(monotone_polygon_chains));
+  ValidateMonotoneChains(
+      MonotoneChainSliceFromArray(TI->monotone_polygon_chains));
 #endif
-    const Traversal traversal = TraversalArrayPop(&stack);
-    const S32 current_trapezoid = traversal.current_trapezoid;
-    if (!current_trapezoid || visited_trapezoids.v[current_trapezoid]) {
-      continue;
-    }
-    const Trapezoid t = trapezoids.v[current_trapezoid];
-    const S32 traversed_from = traversal.traversed_from;
-    visited_trapezoids.v[current_trapezoid] = true;
+  if (!current_trapezoid || TI->visited_trapezoids.v[current_trapezoid]) {
+    return;
+  }
+  const Trapezoid t = TI->trapezoids.v[current_trapezoid];
+  TI->visited_trapezoids.v[current_trapezoid] = true;
 
-    /* We have much more information available here.
-     * rseg: goes upwards
-     * lseg: goes downwards
-     * Initially assume that dir = TR_FROM_DN (from the left)
-     * Switch v0 and v1 if necessary afterwards
-     * special cases for triangles with cusps at the opposite ends.
-     * take care of this first
-     */
-    if (!(t.up0 || t.up1)) {
-      if (t.down0 && t.down1) /* downward opening triangle */
-      {
-        /* connect v0 and v1
-         *      (v1)
-         *    /      \
-         *   /  (v0)  \
-         *  /  /    \  \
-         */
-        S32 v0 = trapezoids.v[t.down1].left_segment;
-        S32 v1 = t.left_segment;
-        if (traversed_from == t.down1) {
+  /* We have much more information available here.
+   * rseg: goes upwards
+   * lseg: goes downwards
+   * Initially assume that dir = TR_FROM_DN (from the left)
+   * Switch v0 and v1 if necessary afterwards
+   * special cases for triangles with cusps at the opposite ends.
+   * take care of this first
+   */
+  if (!(t.up0 || t.up1)) {
+    if (t.down0 && t.down1) /* downward opening triangle */
+    {
+      /* connect v0 and v1
+       *      (v1)
+       *    /      \
+       *   /  (v0)  \
+       *  /  /    \  \
+       */
+      S32 v0 = TI->trapezoids.v[t.down1].left_segment;
+      S32 v1 = t.left_segment;
+      if (traversed_from == t.down1) {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v1, v0);
+        TraversePolygon(TI, current_monotone, t.down1, current_trapezoid, DOWN);
+        TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+      } else {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v0, v1);
+        TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
+        TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
+      }
+    } else {
+      /* Just traverse all neighbors */
+      TraversePolygon(TI, current_monotone, t.down1, current_trapezoid, DOWN);
+      TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
+    }
+  } else if (!(t.down0 || t.down1)) {
+    if (t.up0 && t.up1) /* upward opening triangle */
+    {
+      /* connect v0 and v1
+       *    \      /
+       *     \    /
+       *   \  (v1)  /
+       *    \      /
+       *      (v0)
+       */
+      S32 v0 = t.right_segment;
+      S32 v1 = TI->trapezoids.v[t.up0].right_segment;
+      if (traversed_from == t.up1) {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v1, v0);
+        TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+        TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
+      } else {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v0, v1);
+        TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+        TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
+      }
+    } else {
+      TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+      TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+    }
+  } else if (t.up0 && t.up1) {
+    if (t.down0 && t.down1) {
+      /* downward + upward cusps
+       *  connect v0 and v1
+       *     \    /
+       *      (v1)
+       *       || <- to insert
+       *      (v0)
+       *     /    \
+       */
+      S32 v0 = TI->trapezoids.v[t.down1].left_segment;
+      S32 v1 = TI->trapezoids.v[t.up0].right_segment;
+      if ((dir == UP && t.down1 == traversed_from) ||
+          (dir == DOWN && t.up1 == traversed_from)) {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v1, v0);
+        TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+        TraversePolygon(TI, current_monotone, t.down1, current_trapezoid, DOWN);
+        TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
+        TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+      } else {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v0, v1);
+        TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+        TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
+        TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
+        TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
+      }
+    } else {
+      /* only downward cusp
+       *  |     \    /
+       *  |      (v0)
+       *  |
+       * (v1)
+       */
+      if (Coord2EqualTo(t.min_y,
+                        TI->vertices.v[TI->segments.v[t.left_segment].v1])) {
+        S32 v0 = TI->trapezoids.v[t.up0].right_segment;
+        S32 v1 = TI->segments.v[t.left_segment].next;
+
+        if (dir == DOWN && t.up0 == traversed_from) {
           S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v1, v0);
-          TraversalArrayPush(&stack, (Traversal){new_monotone, t.down0,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                 current_trapezoid, DOWN});
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v1, v0);
+          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
         } else {
           S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v0, v1);
-          TraversalArrayPush(&stack, (Traversal){new_monotone, t.down1,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                 current_trapezoid, DOWN});
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v0, v1);
+          TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, current_monotone, t.down1, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
         }
       } else {
-        /* Just traverse all neighbors */
-        TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                               current_trapezoid, DOWN});
-        TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                               current_trapezoid, DOWN});
-      }
-    } else if (!(t.down0 || t.down1)) {
-      if (t.up0 && t.up1) /* upward opening triangle */
-      {
-        /* connect v0 and v1
-         *    \      /
-         *     \    /
-         *   \  (v1)  /
-         *    \      /
-         *      (v0)
+        /*   \    /    |
+         *    (v1)     |
+         *             |
+         *            (v0)
          */
         S32 v0 = t.right_segment;
-        S32 v1 = trapezoids.v[t.up0].right_segment;
-        if (traversed_from == t.up1) {
+        S32 v1 = TI->trapezoids.v[t.up0].right_segment;
+        if (dir == DOWN && t.up1 == traversed_from) {
           S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v1, v0);
-          TraversalArrayPush(
-              &stack, (Traversal){new_monotone, t.up0, current_trapezoid, UP});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                 current_trapezoid, UP});
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v1, v0);
+          TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
         } else {
           S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v0, v1);
-          TraversalArrayPush(
-              &stack, (Traversal){new_monotone, t.up1, current_trapezoid, UP});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                 current_trapezoid, UP});
-        }
-      } else {
-        TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                               current_trapezoid, UP});
-        TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                               current_trapezoid, UP});
-      }
-    } else if (t.up0 && t.up1) {
-      if (t.down0 && t.down1) {
-        /* downward + upward cusps
-         *  connect v0 and v1
-         *     \    /
-         *      (v1)
-         *       || <- to insert
-         *      (v0)
-         *     /    \
-         */
-        S32 v0 = trapezoids.v[t.down1].left_segment;
-        S32 v1 = trapezoids.v[t.up0].right_segment;
-        if ((dir == UP && t.down1 == traversed_from) ||
-            (dir == DOWN && t.up1 == traversed_from)) {
-          S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v1, v0);
-          TraversalArrayPush(
-              &stack, (Traversal){new_monotone, t.up0, current_trapezoid, UP});
-          TraversalArrayPush(&stack, (Traversal){new_monotone, t.down0,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                 current_trapezoid, UP});
-        } else {
-          S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v0, v1);
-          TraversalArrayPush(
-              &stack, (Traversal){new_monotone, t.up1, current_trapezoid, UP});
-          TraversalArrayPush(&stack, (Traversal){new_monotone, t.down1,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                 current_trapezoid, UP});
-        }
-      } else {
-        /* only downward cusp
-         *  |     \    /
-         *  |      (v0)
-         *  |
-         * (v1)
-         */
-        if (Coord2EqualTo(t.min_y, vertices.v[segments.v[t.left_segment].v1])) {
-          S32 v0 = trapezoids.v[t.up0].right_segment;
-          S32 v1 = segments.v[t.left_segment].next;
-
-          if (dir == DOWN && t.up0 == traversed_from) {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v1, v0);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up1,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                   current_trapezoid, UP});
-          } else {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v0, v1);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up0,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                   current_trapezoid, UP});
-          }
-        } else {
-          /*   \    /    |
-           *    (v1)     |
-           *             |
-           *            (v0)
-           */
-          S32 v0 = t.right_segment;
-          S32 v1 = trapezoids.v[t.up0].right_segment;
-          if (dir == DOWN && t.up1 == traversed_from) {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v1, v0);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up0,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                   current_trapezoid, UP});
-          } else {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v0, v1);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up1,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                   current_trapezoid, UP});
-          }
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v0, v1);
+          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, current_monotone, t.down1, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
         }
       }
-    } else if (t.up0 || t.up1) /* no downward cusp */
+    }
+  } else if (t.up0 || t.up1) /* no downward cusp */
+  {
+    if (t.down0 && t.down1) /* only upward cusp */
     {
-      if (t.down0 && t.down1) /* only upward cusp */
-      {
-        if (Coord2EqualTo(t.max_y, vertices.v[segments.v[t.left_segment].v0])) {
-          /* (v1)
-           *  |
-           *  |
-           *  |       (v0)
-           *  |      /    \
-           */
-          S32 v0 = trapezoids.v[t.down1].left_segment;
-          S32 v1 = t.left_segment;
-          if (!(dir == UP && traversed_from == t.down0)) {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v1, v0);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                   current_trapezoid, UP});
-          } else {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v0, v1);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up1,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up0,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-          }
+      if (Coord2EqualTo(t.max_y,
+                        TI->vertices.v[TI->segments.v[t.left_segment].v0])) {
+        /* (v1)
+         *  |
+         *  |
+         *  |       (v0)
+         *  |      /    \
+         */
+        S32 v0 = TI->trapezoids.v[t.down1].left_segment;
+        S32 v1 = t.left_segment;
+        if (!(dir == UP && traversed_from == t.down0)) {
+          S32 new_monotone = SplitPolygonByDiagonal(
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v1, v0);
+          TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, current_monotone, t.down1, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
         } else {
-          //            (v1)
-          //             |
-          //             |
-          //    (v0)     |
-          //   /    \    |
-          S32 v0 = trapezoids.v[t.down1].left_segment;
-          S32 v1 = segments.v[t.right_segment].next;
+          S32 new_monotone = SplitPolygonByDiagonal(
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v0, v1);
+          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
+        }
+      } else {
+        //            (v1)
+        //             |
+        //             |
+        //    (v0)     |
+        //   /    \    |
+        S32 v0 = TI->trapezoids.v[t.down1].left_segment;
+        S32 v1 = TI->segments.v[t.right_segment].next;
 
-          if (dir == UP && traversed_from == t.down1) {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v1, v0);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up0,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.up1,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-          } else {
-            S32 new_monotone = SplitPolygonByDiagonal(
-                VertexChainSliceFromArray(vertex_chains),
-                monotone_polygon_chains, monotone_chain_start_vertex,
-                current_monotone, v0, v1);
-            TraversalArrayPush(&stack, (Traversal){new_monotone, t.down1,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                   current_trapezoid, UP});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                   current_trapezoid, DOWN});
-            TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                   current_trapezoid, UP});
-          }
-        }
-      } else { /* no cusp */
-        S32 v0, v1;
-        if (Coord2EqualTo(t.max_y, vertices.v[segments.v[t.left_segment].v0]) &&
-            Coord2EqualTo(t.min_y,
-                          vertices.v[segments.v[t.right_segment].v0])) {
-          //    (v1)
-          //    /        |
-          //   /         |
-          //            (v0)
-          v0 = t.right_segment;
-          v1 = t.left_segment;
-        } else if (Coord2EqualTo(t.max_y,
-                                 vertices.v[segments.v[t.left_segment].v1]) &&
-                   Coord2EqualTo(t.min_y,
-                                 vertices.v[segments.v[t.right_segment].v1])) {
-          // go to the segment end if they are at opposite of one another.
-          // same picture as above but with v1 of both segments
-          v0 = segments.v[t.right_segment].next;
-          v1 = segments.v[t.left_segment].next;
-        } else { /* no split possible */
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                 current_trapezoid, UP});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                 current_trapezoid, UP});
-          continue;
-        }
-        if (dir == DOWN) {
+        if (dir == UP && traversed_from == t.down1) {
           S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v1, v0);
-          TraversalArrayPush(&stack, (Traversal){new_monotone, t.down0,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){new_monotone, t.down1,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up1,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.up0,
-                                                 current_trapezoid, DOWN});
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v1, v0);
+          TraversePolygon(TI, current_monotone, t.down1, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
         } else {
           S32 new_monotone = SplitPolygonByDiagonal(
-              VertexChainSliceFromArray(vertex_chains), monotone_polygon_chains,
-              monotone_chain_start_vertex, current_monotone, v0, v1);
-          TraversalArrayPush(
-              &stack, (Traversal){new_monotone, t.up1, current_trapezoid, UP});
-          TraversalArrayPush(
-              &stack, (Traversal){new_monotone, t.up0, current_trapezoid, UP});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down0,
-                                                 current_trapezoid, DOWN});
-          TraversalArrayPush(&stack, (Traversal){current_monotone, t.down1,
-                                                 current_trapezoid, DOWN});
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v0, v1);
+          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
         }
+      }
+    } else { /* no cusp */
+      S32 v0, v1;
+      if (Coord2EqualTo(t.max_y,
+                        TI->vertices.v[TI->segments.v[t.left_segment].v0]) &&
+          Coord2EqualTo(t.min_y,
+                        TI->vertices.v[TI->segments.v[t.right_segment].v0])) {
+        //    (v1)
+        //    /        |
+        //   /         |
+        //            (v0)
+        v0 = t.right_segment;
+        v1 = t.left_segment;
+      } else if (Coord2EqualTo(
+                     t.max_y,
+                     TI->vertices.v[TI->segments.v[t.left_segment].v1]) &&
+                 Coord2EqualTo(
+                     t.min_y,
+                     TI->vertices.v[TI->segments.v[t.right_segment].v1])) {
+        // go to the segment end if they are at opposite of one another.
+        // same picture as above but with v1 of both segments
+        v0 = TI->segments.v[t.right_segment].next;
+        v1 = TI->segments.v[t.left_segment].next;
+      } else { /* no split possible */
+        TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+        TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
+        TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+        TraversePolygon(TI, current_monotone, t.down1, current_trapezoid, DOWN);
+        return;
+      }
+      if (dir == DOWN) {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v1, v0);
+        TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+        TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+        TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
+        TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+      } else {
+        S32 new_monotone = SplitPolygonByDiagonal(
+            VertexChainSliceFromArray(TI->vertex_chains),
+            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+            current_monotone, v0, v1);
+        TraversePolygon(TI, current_monotone, t.down1, current_trapezoid, DOWN);
+        TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
+        TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
+        TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
       }
     }
   }
 #ifdef DEBUG
-  ValidateMonotoneChains(MonotoneChainSliceFromArray(monotone_polygon_chains));
+  ValidateMonotoneChains(
+      MonotoneChainSliceFromArray(TI->monotone_polygon_chains));
 #endif
-  temp_arena_memory_end(scratch);
 }
 
 // compute the diamond angle respective to the x axis. see
@@ -2208,7 +2150,8 @@ static void ValidateMonotonePolygon(VertexChainSlice vertex_chains,
     y_min = vertex_chains.v[mc.v[y_min_index].vertex].pt;
     current_vertex = mc.v[y_max_index].prev;
   }
-  fprintf(stderr, "Polygon base: %d -> %d\n", y_max_index, y_min_index);
+  fprintf(stderr, "Polygon base: %d -> %d\n", mc.v[y_max_index].vertex,
+          mc.v[y_min_index].vertex);
 
   while (current_vertex != y_min_index) {
     if (!Coord2LessThan(vertex_chains.v[mc.v[current_vertex].vertex].pt,
