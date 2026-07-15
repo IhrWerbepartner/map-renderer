@@ -3,6 +3,7 @@
 #include "base.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 typedef struct {
@@ -158,6 +159,11 @@ static void ValidateQueryTrapezoidSegmentStructures(QueryNodeSlice qs,
                                                     SegmentSlice segments,
                                                     Coord2Slice vertices);
 static void ValidateMonotoneChains(const MonotoneChainSlice chains);
+static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
+                                            const MonotoneChainSlice mc);
+static void ValidateMonotonePolygon(VertexChainSlice vertex_chains,
+                                    MonotoneChainSlice mc, S32 y_max_index,
+                                    MonotoneBaseSide side);
 #endif
 
 // computes the triangulation of the coordinates which are partitioned by
@@ -231,7 +237,7 @@ static void TriangulateMonotonePolygons(
     VertexChainSlice vertex_chains, MonotoneChainSlice monotone_polygon_chains,
     S32Slice monotone_chain_start_vertex, TriangleArray *op) {
 #ifdef DEBUG
-  for (S32 i = 0; i < monotone_polygon_chains.count; i++) {
+  for (S32 i = 0; i < monotone_chain_start_vertex.count; i++) {
     fprintf(stderr, "\n\nPolygon %d: ", i);
     S32 first_vertex =
         monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].vertex;
@@ -246,12 +252,12 @@ static void TriangulateMonotonePolygons(
   fprintf(stderr, "\n");
 #endif
 
-  for (S32 i = 0; i < monotone_polygon_chains.count; i++) {
+  for (S32 i = 0; i < monotone_chain_start_vertex.count; i++) {
     S32 vertex_count = 1;
     const S32 first_vertex =
         monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].vertex;
     Coord2 ymax = vertex_chains.v[first_vertex].pt;
-    const Coord2 ymin = vertex_chains.v[first_vertex].pt;
+    Coord2 ymin = vertex_chains.v[first_vertex].pt;
     S32 posmax = monotone_chain_start_vertex.v[i];
     S32 p = monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].next;
     S32 v;
@@ -259,6 +265,9 @@ static void TriangulateMonotonePolygons(
       if (Coord2GreaterThan(vertex_chains.v[v].pt, ymax)) {
         ymax = vertex_chains.v[v].pt;
         posmax = p;
+      }
+      if (Coord2LessThan(vertex_chains.v[v].pt, ymin)) {
+        ymin = vertex_chains.v[v].pt;
       }
       p = monotone_polygon_chains.v[p].next;
       vertex_count += 1;
@@ -300,28 +309,31 @@ static void TriangulateMonotonePolygons(
  * Joseph O-Rourke, Computational Geometry in C. Page 47
  * Uses y_max_index as the vertex with is the maximum in the y-monotone chain.
  * Side determines if the chain is left or right of the single segment.
- *(y_max)                 (y_max)
- * |  \  LEFT        RIGHT /   ^
- * |   \                  /    |
- * |    \        or      /     |
- * |    /               /      |
- * |   /                 \     |
- * |  /                   \    |
- * v /                     \   |
- * (y_min)                (y_min)
+ *(y_max)                   (y_max)
+ * |  \ BASE_LEFT  BASE_RIGHT/   ^
+ * |   \                    /    |
+ * |    \        or        /     |
+ * |    /                 /      |
+ * |   /                   \     |
+ * |  /                     \    |
+ * v /                       \   |
+ * (y_min)                  (y_min)
  */
 static void TriangulateSingleMonotonePolygon(VertexChainSlice vertex_chains,
                                              MonotoneChainSlice monotone_chains,
                                              S32 y_max_index,
                                              MonotoneBaseSide side,
                                              TriangleArray *triangles) {
+#ifdef DEBUG
+  ValidateMonotonePolygon(vertex_chains, monotone_chains, y_max_index, side);
+#endif
+
   S32 v;
   Temp_Arena_Memory scratch = GetScratch();
   S32Array reflex_chain = S32ArrayNew(scratch.arena, triangles->capacity);
   S32 endv, vpos;
-
-  if (side == BASE_RIGHT) /* RHS segment is a single segment */
-  {
+  // RHS segment is a single segment
+  if (side == BASE_RIGHT) {
     S32ArrayPush(&reflex_chain, monotone_chains.v[y_max_index].vertex);
     S32 tmp = monotone_chains.v[y_max_index].next;
     S32ArrayPush(&reflex_chain, monotone_chains.v[tmp].vertex);
@@ -367,8 +379,9 @@ static void TriangulateSingleMonotonePolygon(VertexChainSlice vertex_chains,
 
 static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
                                  MonotoneChainArray *monotone_polygon_chains,
-                                 TrapezoidSlice trapezoids,
-                                 SegmentSlice segments, Coord2Slice vertices,
+                                 const TrapezoidSlice trapezoids,
+                                 const SegmentSlice segments,
+                                 const Coord2Slice vertices,
                                  S32Slice visited_trapezoids,
                                  S32Array *monotone_chain_start_vertex) {
   /* Initialize the mon data-structure and start spanning all the */
@@ -394,29 +407,28 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
   // position of a vertex in the first chain
   S32ArrayPush(monotone_chain_start_vertex, 1);
 
-  /* First locate a trapezoid which lies inside the polygon */
-  /* and which is triangular */
+  // First locate a trapezoid which lies inside the polygon and which is
+  // triangular
   for (S32 i = 1; i < trapezoids.count; i++) {
     Trapezoid t = trapezoids.v[i];
     if (t.is_valid && t.left_segment && t.right_segment) {
-      /* triangle */
+      // triangle
       if (!(t.up0 || t.up1) || !(t.down0 || t.down1)) {
         // check for winding
         if (Coord2GreaterThan(vertices.v[segments.v[t.right_segment].v1],
                               vertices.v[segments.v[t.right_segment].v0])) {
-          /* traverse the polygon */
-          if (trapezoids.v[i].up0)
+          if (trapezoids.v[i].up0) {
             TraversePolygon(vertex_chains, monotone_polygon_chains, trapezoids,
                             segments, vertices, visited_trapezoids,
                             monotone_chain_start_vertex, 0, i,
                             trapezoids.v[i].up0, DOWN);
-          if (trapezoids.v[i].down0)
+          }
+          if (trapezoids.v[i].down0) {
             TraversePolygon(vertex_chains, monotone_polygon_chains, trapezoids,
                             segments, vertices, visited_trapezoids,
                             monotone_chain_start_vertex, 0, i,
                             trapezoids.v[i].down0, UP);
-          // TODO: ensure that a sole lower neighbor is in down0 via a
-          // validation function in DEBUG.
+          }
           break;
         }
       }
@@ -466,15 +478,14 @@ TraversePolygon(VertexChainArray *vertex_chains,
     const S32 traversed_from = traversal.traversed_from;
     visited_trapezoids.v[current_trapezoid] = true;
 
-    /* We have much more information available here. */
-    /* rseg: goes upwards   */
-    /* lseg: goes downwards */
-
-    /* Initially assume that dir = TR_FROM_DN (from the left) */
-    /* Switch v0 and v1 if necessary afterwards */
-
-    /* special cases for triangles with cusps at the opposite ends. */
-    /* take care of this first */
+    /* We have much more information available here.
+     * rseg: goes upwards
+     * lseg: goes downwards
+     * Initially assume that dir = TR_FROM_DN (from the left)
+     * Switch v0 and v1 if necessary afterwards
+     * special cases for triangles with cusps at the opposite ends.
+     * take care of this first
+     */
     if (!(t.up0 || t.up1)) {
       if (t.down0 && t.down1) /* downward opening triangle */
       {
@@ -830,14 +841,15 @@ static F64 DiamondAngleBetweenVectors(Coord2 vp0, Coord2 vpnext, Coord2 vp1) {
 static void NextVertexIndexForMonotoneChain(VertexChainSlice vertex_chains,
                                             S32 v0, S32 v1, S32 *ip, S32 *iq) {
   S32 tp = 0, tq = 0;
-  VertexChain vp0 = vertex_chains.v[v0];
-  VertexChain vp1 = vertex_chains.v[v1];
+  const VertexChain vp0 = vertex_chains.v[v0];
+  const VertexChain vp1 = vertex_chains.v[v1];
 
   /* p is identified as follows. Scan from (v0, v1) rightwards till */
   /* you hit the first segment starting from v0. That chain is the */
   /* chain of our interest */
   F64 angle = 5.0;
   F64 temp;
+  bool found = false;
   for (S32 i = 0; i < 4; i++) {
     if (vp0.next_vertex[i] <= 0)
       continue;
@@ -845,12 +857,15 @@ static void NextVertexIndexForMonotoneChain(VertexChainSlice vertex_chains,
              vp0.pt, vertex_chains.v[vp0.next_vertex[i]].pt, vp1.pt)) < angle) {
       angle = temp;
       tp = i;
+      found = true;
     }
   }
+  ASSERT(found, "found no vertex in vertex chain");
   *ip = tp;
 
   /* Do similar actions for q */
   angle = 5.0;
+  found = false;
   for (S32 i = 0; i < 4; i++) {
     if (vp1.next_vertex[i] <= 0)
       continue;
@@ -858,8 +873,10 @@ static void NextVertexIndexForMonotoneChain(VertexChainSlice vertex_chains,
              vp1.pt, vertex_chains.v[vp1.next_vertex[i]].pt, vp0.pt)) < angle) {
       angle = temp;
       tq = i;
+      found = true;
     }
   }
+  ASSERT(found, "found no vertex in vertex chain");
   *iq = tq;
 }
 
@@ -874,7 +891,6 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
                                   S32 current_monotone_polygon, S32 v0,
                                   S32 v1) {
   S32 ip, iq;
-  const S32 new_monotone = S32ArrayPush(monotone_chain_start_vertex, 0);
 
   VertexChain *vp0 = &vertex_chains.v[v0];
   VertexChain *vp1 = &vertex_chains.v[v1];
@@ -920,8 +936,8 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
   monotone_polygon_chains->data[p].next = q;
   monotone_polygon_chains->data[q].prev = p;
 
-  const int nf0 = vp0->next_free;
-  const int nf1 = vp1->next_free;
+  const S32 nf0 = vp0->next_free;
+  const S32 nf1 = vp1->next_free;
 
   vp0->next_vertex[ip] = v1;
   vp0->vertex_index_in_monotone_chain[nf0] = i;
@@ -942,9 +958,10 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
 #endif
 
   monotone_chain_start_vertex->data[current_monotone_polygon] = p;
-  monotone_chain_start_vertex->data[new_monotone] = i;
+  const S32 new_monotone = S32ArrayPush(monotone_chain_start_vertex, i);
 #ifdef DEBUG
-  ValidateMonotoneChains(MonotoneChainSliceFromArray(monotone_polygon_chains));
+  ValidateMonotoneAndVertexChains(
+      vertex_chains, MonotoneChainSliceFromArray(monotone_polygon_chains));
 #endif
   return new_monotone;
 }
@@ -1103,9 +1120,8 @@ static S32 TrapezoidIndexFromVertex(QueryNodeSlice query_structure,
 // returns the lower trapezoid if this is the first vertex inserted
 // the upper trapezoid if it was the second (see first_vertex)
 static S32 AddVertex(QueryNodeArray *query_structure, Coord2Slice vertices,
-                     SegmentSlice segments, TrapezoidArray *trapezoids,
-                     S32 segment, S32 v0, S32 v1, S32 v0_root,
-                     bool first_vertex) {
+                     SegmentSlice segments, TrapezoidArray *trapezoids, S32 v0,
+                     S32 v1, S32 v0_root, bool first_vertex) {
 
   const S32 old_upper_trapezoid =
       TrapezoidIndexFromVertex(QueryNodeSliceFromArray(query_structure),
@@ -1209,16 +1225,15 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
   S32 top_trapezoid, bottom_trapezoid;
   if (!v0_inserted) {
     top_trapezoid = AddVertex(query_structure, vertices, segments, trapezoids,
-                              segment, s.v0, s.v1, s.root0, true);
+                              s.v0, s.v1, s.root0, true);
   } else {
     top_trapezoid =
         TrapezoidIndexFromVertex(QueryNodeSliceFromArray(query_structure),
                                  segments, vertices, s.v0, s.v1, s.root0);
   }
   if (!v1_inserted) {
-    bottom_trapezoid =
-        AddVertex(query_structure, vertices, segments, trapezoids, segment,
-                  s.v1, s.v0, s.root1, false);
+    bottom_trapezoid = AddVertex(query_structure, vertices, segments,
+                                 trapezoids, s.v1, s.v0, s.root1, false);
   } else {
     bottom_trapezoid =
         TrapezoidIndexFromVertex(QueryNodeSliceFromArray(query_structure),
@@ -1296,6 +1311,11 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
         // three upper neighbors
         if (trapezoids->data[t].usave) {
           if (trapezoids->data[t].uside == LEFT) {
+            /* usave \ t.up0 \  /  t.up1
+             * -------\-------()-------------
+             *         \
+             *          \
+             */
             trapezoids->data[new_trapezoid].up0 = trapezoids->data[t].up1;
             trapezoids->data[t].up1 = 0;
             trapezoids->data[new_trapezoid].up1 = trapezoids->data[t].usave;
@@ -1305,8 +1325,17 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
                 new_trapezoid;
             trapezoids->data[trapezoids->data[new_trapezoid].up1].down0 =
                 new_trapezoid;
+            /* t.up0 \ new.up0 \  /  new.up1
+             * ------ \---^v----()-----^v------
+             *    t    \   new_trapezoid
+             *          \
+             */
           } else {
-            /* intersects in the right */
+            /*  t.up0   \  /   t.up1     /  t.usave
+             * ----------()-------------/----
+             *                         /
+             *                        /
+             */
             trapezoids->data[new_trapezoid].up1 = 0;
             trapezoids->data[new_trapezoid].up0 = trapezoids->data[t].up1;
             trapezoids->data[t].up1 = trapezoids->data[t].up0;
@@ -1316,6 +1345,11 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
             trapezoids->data[trapezoids->data[t].up1].down0 = t;
             trapezoids->data[trapezoids->data[new_trapezoid].up0].down0 =
                 new_trapezoid;
+            /*  t.up0   \  /   t.up1     / newt.up0
+             * ----^v----()----^v-------/----
+             *                         /
+             *          t             /  new_trapezoid
+             */
           }
 
           trapezoids->data[t].usave = trapezoids->data[new_trapezoid].usave = 0;
@@ -1345,26 +1379,22 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
            */
           if (trapezoids->data[td0].right_segment &&
               !VertexLeftOfSegment(vertices, segments,
-                                   trapezoids->data[td0].right_segment,
-                                   segments.v[segment].v1)) {
+                                   trapezoids->data[td0].right_segment, s.v1)) {
             trapezoids->data[t].up0 = trapezoids->data[t].up1 =
                 trapezoids->data[new_trapezoid].up1 = 0;
-            trapezoids->data[t].max_y = COORD2_PLUS_INFINITY;
             trapezoids->data[trapezoids->data[new_trapezoid].up0].down1 =
                 new_trapezoid;
           } else {
-            /* TODO: idk if this is right
-             *    cusp going leftwards
+            /*    cusp going leftwards
              *        t.u0
-             * ---------------v----
-             *      /   \
-             *     / new \ t
+             * ----v---------------
+             *         /   \
+             *    t   / new \
              * --------------------
              */
             trapezoids->data[new_trapezoid].up0 =
                 trapezoids->data[new_trapezoid].up1 = trapezoids->data[t].up1 =
                     0;
-            trapezoids->data[new_trapezoid].max_y = COORD2_PLUS_INFINITY;
             trapezoids->data[trapezoids->data[t].up0].down0 = t;
           }
         } else {
@@ -1401,7 +1431,6 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
           trapezoids->data[trapezoids->data[t].down0].up0 = t;
           trapezoids->data[new_trapezoid].down0 =
               trapezoids->data[new_trapezoid].down1 = 0;
-          trapezoids->data[new_trapezoid].min_y = COORD2_MINUS_INFINITY;
         } else {
           // R-L downward cusp
           //        \ t   /
@@ -1412,7 +1441,6 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
           trapezoids->data[trapezoids->data[new_trapezoid].down0].up1 =
               new_trapezoid;
           trapezoids->data[t].down0 = trapezoids->data[t].down1 = 0;
-          trapezoids->data[t].min_y = COORD2_MINUS_INFINITY;
         }
       } else {
         const S32 down0_of_t = trapezoids->data[t].down0;
@@ -1568,11 +1596,6 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
       }
 
       t = tnext;
-#ifdef DEBUG
-      ValidateQueryTrapezoidSegmentStructures(
-          QueryNodeSliceFromArray(query_structure),
-          TrapezoidSliceFromArray(trapezoids), segments, vertices);
-#endif
     }
 
     trapezoids->data[t_sav].right_segment =
@@ -1588,6 +1611,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
   ASSERT(last_trapezoid_right > 0 && last_trapezoid_right < trapezoids->len,
          "Last Trapezoid right of segment undefined")
 
+  segments.v[segment].is_inserted = true;
 #ifdef DEBUG
   ValidateQueryTrapezoidSegmentStructures(
       QueryNodeSliceFromArray(query_structure),
@@ -1602,8 +1626,6 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
       QueryNodeSliceFromArray(query_structure),
       TrapezoidSliceFromArray(trapezoids), segments, vertices);
 #endif
-
-  segments.v[segment].is_inserted = true;
 }
 
 /* Thread in the segment into the existing trapezoidation. The
@@ -1802,10 +1824,12 @@ static S32 RandomSegment(S32Array *permutation) {
   if (permutation->len > 1) {
     const S32 segment_index = S32ArrayPop(permutation);
 #ifdef DEBUG
-    fprintf(stderr, "choose_segment: %d\n", segment_index);
+    fprintf(stderr, "choose segment: %d, %d left\n", segment_index,
+            permutation->len);
 #endif
     return segment_index;
   }
+  ASSERT(false, "RandomSegment has no more segment to return");
 }
 
 // computes log^*(n) (iterative logarithm)
@@ -1978,33 +2002,38 @@ static void ValidateTrapezoidStructure(const TrapezoidSlice ts) {
              "Trapezoid with no segment bounds can only have neighbors in one "
              "direction");
     }
+    if (t.left_segment || t.right_segment) {
+      ASSERT(!Coord2EqualTo(t.min_y, COORD2_MINUS_INFINITY) ||
+                 !Coord2EqualTo(t.max_y, COORD2_PLUS_INFINITY),
+             "Trapezoid with segment should have min/max_y != INFINITY")
+    }
     ASSERT(t.down0 || !t.down1, "Sole downward neighbor in wrong field");
     ASSERT(t.up0 || !t.up1, "Sole upward neighbor in wrong field");
-    if (!t.down0) {
+    if (!t.down0 && !(t.left_segment || t.right_segment)) {
       ASSERT(Coord2EqualTo(t.min_y, COORD2_MINUS_INFINITY),
              "Min_y of %d should be minus infinity if no lower neighbor exists",
              i)
     }
-    if (!t.up0) {
+    if (!t.up0 && !(t.left_segment || t.right_segment)) {
       ASSERT(Coord2EqualTo(t.max_y, COORD2_PLUS_INFINITY),
              "Max_y %d should be plus infinity if no upper neighbor exists", i)
     }
 
     if (t.down0) {
       ASSERT(ts.v[t.down0].up0 == i || ts.v[t.down0].up1 == i,
-             "Wrong neighboring information");
+             "Wrong neighbor info (down0) for %d and %d", i, t.down0);
     }
     if (t.down1) {
       ASSERT(ts.v[t.down1].up0 == i || ts.v[t.down1].up1 == i,
-             "Wrong neighboring information");
+             "Wrong neighbor info (down1) for %d and %d", i, t.down1);
     }
     if (t.up0) {
       ASSERT(ts.v[t.up0].down0 == i || ts.v[t.up0].down1 == i,
-             "Wrong neighboring information");
+             "Wrong neighbor info (up0) for %d and %d", i, t.up0);
     }
     if (t.up1) {
       ASSERT(ts.v[t.up1].down0 == i || ts.v[t.up1].down1 == i,
-             "Wrong neighboring information");
+             "Wrong neighbor info (up1) for %d and %d", i, t.up1);
     }
     if (t.up0) {
       ASSERT(Coord2EqualTo(t.max_y, ts.v[t.up0].min_y),
@@ -2021,6 +2050,20 @@ static void ValidateTrapezoidStructure(const TrapezoidSlice ts) {
     if (t.down1) {
       ASSERT(Coord2EqualTo(t.min_y, ts.v[t.down1].max_y),
              "Max of lower and min of upper Trapezoid disagree");
+    }
+    if (t.up0 && t.up1) {
+      ASSERT(!(ts.v[t.up0].down0 && ts.v[t.up0].down1),
+             "Trapezoid %d can not have two lower neighbors up0 of %d", t.up0,
+             i)
+      ASSERT(!(ts.v[t.up1].down0 && ts.v[t.up1].down1),
+             "Trapezoid %d can not have two lower neighbors up1 of %d", t.up1,
+             i)
+    }
+    if (t.down0 && t.down1) {
+      ASSERT(!(ts.v[t.down0].up0 && ts.v[t.down0].up1),
+             "Trapezoid %d can not have two upper neighbors", t.down0)
+      ASSERT(!(ts.v[t.down1].up0 && ts.v[t.down1].up1),
+             "Trapezoid %d can not have two upper neighbors", t.down1)
     }
   }
 }
@@ -2105,6 +2148,24 @@ static void ValidateQueryTrapezoidSegmentStructures(
     }
     ASSERT(found_min, "unable to find min_y for trapezoid %d", i)
     ASSERT(found_max, "unable to find max_y for trapezoid %d", i)
+    if (t.up0 && t.up1 && ts.v[t.up0].right_segment &&
+        ts.v[t.up1].right_segment) {
+      ASSERT(!VertexLeftOfSegment(vertices, segments, ts.v[t.up0].right_segment,
+                                  segments.v[ts.v[t.up1].right_segment].v0) ||
+                 !VertexLeftOfSegment(vertices, segments,
+                                      ts.v[t.up0].right_segment,
+                                      segments.v[ts.v[t.up1].right_segment].v1),
+             "Up0 is right of up1 for trapezoid %d", i)
+    }
+    if (t.up0 && t.up1) {
+      const Segment up0_right_segment = segments.v[ts.v[t.up0].right_segment];
+      const Segment up1_left_segment = segments.v[ts.v[t.up1].left_segment];
+      ASSERT(up0_right_segment.v0 == up1_left_segment.v0 ||
+                 up0_right_segment.v0 == up1_left_segment.v1 ||
+                 up0_right_segment.v1 == up1_left_segment.v0 ||
+                 up0_right_segment.v1 == up1_left_segment.v0,
+             "Rigtht/Left Segments of %d and %d disagree", t.up0, t.up1)
+    }
   }
 }
 
@@ -2116,5 +2177,57 @@ static void ValidateMonotoneChains(const MonotoneChainSlice chains) {
            i_prev, i)
     ASSERT(i == chains.v[i_next].prev, "Next and prev of %d and %d disagree",
            i_next, i)
+  }
+}
+static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
+                                            const MonotoneChainSlice mc) {
+  ValidateMonotoneChains(mc);
+  for (S32 i = 1; i < vc.count; i += 1) {
+    for (S32 j = 0; j < vc.v[i].next_free; j += 1) {
+      ASSERT(mc.v[vc.v[i].vertex_index_in_monotone_chain[j]].vertex == i,
+             "vc -> mc and mc -> vc indices do not match")
+    }
+  }
+}
+
+static void ValidateMonotonePolygon(VertexChainSlice vertex_chains,
+                                    MonotoneChainSlice mc, S32 y_max_index,
+                                    MonotoneBaseSide side) {
+
+  // RHS segment is a single segment
+  Coord2 y_min;
+  Coord2 y_max = vertex_chains.v[mc.v[y_max_index].vertex].pt;
+  Coord2 y_current = y_max;
+  S32 current_vertex, y_min_index;
+  if (side == BASE_RIGHT) {
+    y_min_index = mc.v[y_max_index].prev;
+    y_min = vertex_chains.v[mc.v[y_min_index].vertex].pt;
+    current_vertex = mc.v[y_max_index].next;
+  } else {
+    y_min_index = mc.v[y_max_index].next;
+    y_min = vertex_chains.v[mc.v[y_min_index].vertex].pt;
+    current_vertex = mc.v[y_max_index].prev;
+  }
+  fprintf(stderr, "Polygon base: %d -> %d\n", y_max_index, y_min_index);
+
+  while (current_vertex != y_min_index) {
+    if (!Coord2LessThan(vertex_chains.v[mc.v[current_vertex].vertex].pt,
+                        y_current)) {
+      fprintf(stderr, "Polygon y_max_index: %d is not a monotone mountain\n",
+              y_max_index);
+    }
+    //      ASSERT(Coord2LessThan(vertex_chains.v[mc.v[current_vertex].vertex].pt,
+    //                            y_current),
+    //             "Polygon is not a monotone mountain");
+    // ASSERT(Coord2GreaterThanEqualTo(
+    //           vertex_chains.v[mc.v[current_vertex].vertex].pt, y_min),
+    //       "Polygon vertex %d smaller than y_min",
+    //       mc.v[current_vertex].vertex);
+    y_current = vertex_chains.v[mc.v[current_vertex].vertex].pt;
+    if (side == BASE_RIGHT) {
+      current_vertex = mc.v[current_vertex].next;
+    } else {
+      current_vertex = mc.v[current_vertex].prev;
+    }
   }
 }

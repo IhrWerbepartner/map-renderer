@@ -483,7 +483,8 @@ Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
 
 // iterate backwards over the coordinates omitting the first one as it is
 // identical to the last input: [a, b, c, d, e] returns [e, d, c, b]
-void contour_from_json_array(const JsonNode *coordinates, Coord2Array *result_array) {
+void contour_from_json_array(const JsonNode *coordinates,
+                             Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
@@ -809,8 +810,10 @@ void draw_line_strings(const GeoJson *coords, Camera2D camera,
     }
   }
 }
-void draw_multi_line_strings(GeoJson *_coords, Camera2D _camera) {
+void draw_multi_line_strings(GeoJson *coords, Camera2D camera) {
   // -------------------- MULTI LINE STRINGS -----------------------
+  (void) coords;
+  (void) camera;
 }
 
 void draw_polygons(const GeoJson *coords, Camera2D camera) {
@@ -829,7 +832,7 @@ void draw_polygons(const GeoJson *coords, Camera2D camera) {
     // we need to specify the triangle in counter-clockwise order but because we
     // reversed the coords the output we get is in clockwise order, therefore
     // change b, and c.
-    DrawTriangle(a, c, b, BLUE);
+    DrawTriangle(a, c, b, (Color){0, 0, 255, 100});
     DrawLineEx(a, b, 3, RED);
     DrawLineEx(a, c, 3, RED);
     DrawLineEx(b, c, 3, RED);
@@ -840,9 +843,10 @@ void draw_polygons(const GeoJson *coords, Camera2D camera) {
     DrawText(buf, (int)b.x, (int)b.y, 50, RED);
     sprintf(buf, "%d", t.c);
     DrawText(buf, (int)c.x, (int)c.y, 50, RED);
-    DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f, %03.05f][%03.05f, "
-              "%03.05f]\n",
-              a.x, a.y, b.x, b.y, c.x, c.y)
+    // DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f,
+    // %03.05f][%03.05f, "
+    //"%03.05f]\n",
+    // a.x, a.y, b.x, b.y, c.x, c.y)
   }
 }
 
