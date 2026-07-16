@@ -481,13 +481,30 @@ Coord2 Coord2FromJsonArrayNode(JsonNode *coordinates) {
   }
   return (Coord2){
       .x = x_coordinate->num.dbl_value,
-      .y = -y_coordinate->num.dbl_value,
+      .y = y_coordinate->num.dbl_value,
   };
 }
 
 // iterate backwards over the coordinates omitting the first one as it is
 // identical to the last input: [a, b, c, d, e] returns [e, d, c, b]
 void contour_from_json_array(JsonNode *coordinates, Coord2Array *result_array) {
+  if (coordinates->type != JSON_ARRAY) {
+    ERROR_MSG("invalid coordinates node type")
+  }
+  if (coordinates->children.length <= 2) {
+    ERROR_MSG("invalid contour with: %d coordinates\n",
+              coordinates->children.length)
+  }
+  JsonNode *point_coords = coordinates->children.first;
+  while (point_coords != NULL && point_coords != coordinates->children.last) {
+    Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
+    point_coords = point_coords->next;
+  }
+}
+
+// iterate backwards over the coordinates omitting the first one as it is
+// identical to the last input: [a, b, c, d, e] returns [e, d, c, b]
+void contour_from_json_array_reverse(JsonNode *coordinates, Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
@@ -833,10 +850,20 @@ void draw_polygons(GeoJson *coords, Camera2D camera) {
     // we need to specify the triangle in couter-clockwise order but because we
     // reversed the coords the output we get is in clockwise order, therefore
     // change b, and c.
-    DrawTriangle(a, c, b, BLUE);
-    DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f, %03.05f][%03.05f, "
-              "%03.05f]\n",
-              a.x, a.y, b.x, b.y, c.x, c.y)
+    DrawTriangle(a, b, c, BLUE);
+    DrawLineEx(a, b, 3.f, RED);
+    DrawLineEx(a, c, 3.f, RED);
+    DrawLineEx(b, c, 3.f, RED);
+    char buf[10] = {0};
+    sprintf(buf, "%d", t.a);
+    DrawText(buf, (S32) a.x, (S32) a.y, 50, RED);
+    sprintf(buf, "%d", t.b);
+    DrawText(buf, (S32) b.x, (S32) b.y, 50, RED);
+    sprintf(buf, "%d", t.c);
+    DrawText(buf, (S32) c.x, (S32) c.y, 50, RED);
+    //DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f, %03.05f][%03.05f, "
+    //          "%03.05f]\n",
+    //          a.x, a.y, b.x, b.y, c.x, c.y)
   }
 }
 
