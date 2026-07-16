@@ -130,7 +130,7 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
                                  SegmentSlice segments, Coord2Slice vertices,
                                  S32Slice visited_trapezoids,
                                  S32Array *monotone_chain_start_vertex);
-static void TraversePolygon(TraversalInfo *traversal_info, S32 current_monotone,
+static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
                             S32 current_trapezoid, S32 traversed_from,
                             TraversalDirection dir);
 static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
@@ -468,7 +468,7 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
    * rseg: goes upwards
    * lseg: goes downwards
    * Initially assume that dir = TR_FROM_DN (from the left)
-   * Switch v0 and v1 if necessary afterwards
+   * Switch v0 and v1 if necessary afterward
    * special cases for triangles with cusps at the opposite ends.
    * take care of this first
    */
@@ -752,13 +752,13 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
 #endif
 }
 
-// compute the diamond angle respective to the x axis. see
+// compute the diamond angle respective to the x-axis. see
 // https://www.freesteel.co.uk/wpblog/2009/06/05/encoding-2d-angles-without-trigonometry
 static F64 DiamondAngle(F64 dx, F64 dy) {
   if (dy >= 0)
-    return (dx >= 0 ? dy / (dx + dy) : 1 - dx / (-dx + dy));
+    return dx >= 0 ? dy / (dx + dy) : 1 - dx / (-dx + dy);
   else
-    return (dx < 0 ? 2 - dy / (-dx - dy) : 3 + dx / (dx - dy));
+    return dx < 0 ? 2 - dy / (-dx - dy) : 3 + dx / (dx - dy);
 }
 
 // computes the diamond angle between two vectors v0 -> v1, v0 -> vnext; where

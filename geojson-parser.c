@@ -482,8 +482,9 @@ Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
 }
 
 // iterate over the coordinates omitting the last one as it is
-// identical to the first. input: [a, b, c, d, e] returns [a, b, c, d]
-void contour_from_json_array(const JsonNode *coordinates,
+// identical to the first. input: [a, b, c, d, e] puts [a, b, c, d] into the result array.
+// Returns the index of the coordinate with the lowest y and hightest x.
+S32 ContourFromJsonArray(const JsonNode *coordinates,
                              Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
@@ -492,10 +493,53 @@ void contour_from_json_array(const JsonNode *coordinates,
     ERROR_MSG("invalid contour with: %d coordinates\n",
               coordinates->children.length)
   }
+  S32 min_index = 0;
+  Coord2 min_coordinate = (Coord2) {-(TRIANGULATE_INFINITY), TRIANGULATE_INFINITY };
   const JsonNode *point_coords = coordinates->children.first;
   while (point_coords != NULL && point_coords != coordinates->children.last) {
-    Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
+    const Coord2 current_coordinate = Coord2FromJsonArrayNode(point_coords);
+    const S32 current_index = Coord2ArrayPush(result_array, current_coordinate);
+    if (current_coordinate.y < min_coordinate.y && current_coordinate.x > min_coordinate.x) {
+      min_index = current_index;
+      min_coordinate = current_coordinate;
+    }
     point_coords = point_coords->next;
+  }
+  return min_index;
+}
+
+// reverses the coordinates to make them counterclockwise if needed.
+// Returns true/false depending on if this function it did some operation.
+bool MakeCoordinatesCounterClockwise(Coord2Slice coordinates, S32 min_index) {
+  if (CROSS(coordinates.v[min_index], coordinates.v[(min_index + coordinates.count- 1) % coordinates.count],
+    coordinates.v[min_index + 1 % coordinates.count]) > 0) {
+    for (S32 i = 0; i < coordinates.count / 2; i += 1) {
+      const S32 opposite_index = coordinates.count - i - 1;
+      const Coord2 tmp = coordinates.v[i];
+      coordinates.v[i] = coordinates.v[opposite_index];
+      coordinates.v[opposite_index] = tmp;
+    }
+    return true;
+  }
+  return false;
+}
+
+// iterate over the coordinates reversed omitting the first one as it is
+// identical to the last. input: [a, b, c, d, e] returns [e, d, c, b]
+// this procedure is used to turn a reversee the clockwise direction of a contour
+void ContourFromJsonArrayReversed(const JsonNode *coordinates,
+                             Coord2Array *result_array) {
+  if (coordinates->type != JSON_ARRAY) {
+    ERROR_MSG("invalid coordinates node type")
+  }
+  if (coordinates->children.length <= 2) {
+    ERROR_MSG("invalid contour with: %d coordinates\n",
+              coordinates->children.length)
+  }
+  const JsonNode *point_coords = coordinates->children.last;
+  while (point_coords != NULL && point_coords != coordinates->children.first) {
+    Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
+    point_coords = point_coords->prev;
   }
 }
 
@@ -634,15 +678,27 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
       Coord2ArrayPush(&parsed->polygon_coords, (Coord2){0.f, 0.f});
 
       JsonNode *contour_array = coordinates->children.first;
-      while (contour_array != NULL) {
-        if (contour_array->children.length <= 1) {
-          ERROR_MSG("invalid size for polygon contour: %d",
-                    contour_array->children.length)
-        }
-        S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
-        contour_from_json_array(contour_array, &parsed->polygon_coords);
-        contour_array = contour_array->next;
+      if (contour_array == NULL || contour_array->children.length <= 1) {
+        ERROR_MSG("invalid size for polygon contour: %d",
+                  contour_array->children.length)
       }
+      const S32 min_coordinate_index = ContourFromJsonArray(contour_array, &parsed->polygon_coords);
+      S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
+      contour_array = contour_array->next;
+      if (MakeCoordinatesCounterClockwise(Coord2SliceFromArray(&parsed->polygon_coords), min_coordinate_index)) {
+        while (contour_array != NULL) {
+          S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
+          ContourFromJsonArrayReversed(contour_array, &parsed->polygon_coords);
+          contour_array = contour_array->next;
+        }
+      } else {
+        while (contour_array != NULL) {
+          S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
+          ContourFromJsonArray(contour_array, &parsed->polygon_coords);
+          contour_array = contour_array->next;
+        }
+      }
+
       TessalatePolygon(&parsed->polygon_triangles,
                        (Coord2Slice){.v = vertices,
                                      .count = parsed->polygon_coords.len -
@@ -690,7 +746,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                  "invalid size for polygon contour: %d",
                  contour_array->children.length)
           S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
-          contour_from_json_array(contour_array, &parsed->multi_polygon_coords);
+          ContourFromJsonArray(contour_array, &parsed->multi_polygon_coords);
           contour_array = contour_array->next;
         }
         TessalatePolygon(&parsed->polygon_triangles,
