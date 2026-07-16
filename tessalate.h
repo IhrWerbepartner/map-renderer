@@ -708,41 +708,63 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
         //            (v0)
         v0 = t.right_segment;
         v1 = t.left_segment;
+        if (dir == DOWN) {
+          S32 new_monotone = SplitPolygonByDiagonal(
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v1, v0);
+          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+        } else {
+          S32 new_monotone = SplitPolygonByDiagonal(
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v0, v1);
+          TraversePolygon(TI, current_monotone, t.down1, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
+        }
       } else if (Coord2EqualTo(
                      t.max_y,
-                     TI->vertices.v[TI->segments.v[t.left_segment].v1]) &&
+                     TI->vertices.v[TI->segments.v[t.right_segment].v1]) &&
                  Coord2EqualTo(
                      t.min_y,
-                     TI->vertices.v[TI->segments.v[t.right_segment].v1])) {
+                     TI->vertices.v[TI->segments.v[t.left_segment].v1])) {
         // go to the segment end if they are at opposite of one another.
         // same picture as above but with v1 of both segments
         v0 = TI->segments.v[t.right_segment].next;
         v1 = TI->segments.v[t.left_segment].next;
+        if (dir == DOWN) {
+          S32 new_monotone = SplitPolygonByDiagonal(
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v1, v0);
+          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+        } else {
+          S32 new_monotone = SplitPolygonByDiagonal(
+              VertexChainSliceFromArray(TI->vertex_chains),
+              TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
+              current_monotone, v0, v1);
+          TraversePolygon(TI, current_monotone, t.down1, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid,
+                          DOWN);
+          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
+        }
       } else { /* no split possible */
         TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
         TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
         TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
         TraversePolygon(TI, current_monotone, t.down1, current_trapezoid, DOWN);
-        return;
-      }
-      if (dir == DOWN) {
-        S32 new_monotone = SplitPolygonByDiagonal(
-            VertexChainSliceFromArray(TI->vertex_chains),
-            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
-            current_monotone, v1, v0);
-        TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
-        TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
-        TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
-        TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
-      } else {
-        S32 new_monotone = SplitPolygonByDiagonal(
-            VertexChainSliceFromArray(TI->vertex_chains),
-            TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
-            current_monotone, v0, v1);
-        TraversePolygon(TI, current_monotone, t.down1, current_trapezoid, DOWN);
-        TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
-        TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
-        TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
       }
     }
   }
@@ -775,11 +797,11 @@ static F64 DiamondAngleBetweenVectors(Coord2 vp0, Coord2 vpnext, Coord2 vp1) {
 
 /* (v0, v1) is the new diagonal to be added to the polygon. Find which */
 /* chain to use and return the positions of v0 and v1 in p and q */
-// finds the segments with the smallest angle counterclockwise starting
+// finds the segments with the smallest angle clockwise starting
 // from v0 and v1 respectively to the diagonal to be added.
-//     | /  <- minimize this angle   |
+//     |  minimize this angle ->   \  /
 //    (v0)- - - - - - - - - - - - -(v1)
-//     |   minimize this angle -> /  |
+//    / \ <- minimize this angle     |
 static void NextVertexIndexForMonotoneChain(VertexChainSlice vertex_chains,
                                             S32 v0, S32 v1, S32 *ip, S32 *iq) {
   S32 tp = 0, tq = 0;
@@ -789,14 +811,14 @@ static void NextVertexIndexForMonotoneChain(VertexChainSlice vertex_chains,
   /* p is identified as follows. Scan from (v0, v1) rightwards till */
   /* you hit the first segment starting from v0. That chain is the */
   /* chain of our interest */
-  F64 angle = 5.0;
+  F64 angle = -1.0;
   F64 temp;
   bool found = false;
   for (S32 i = 0; i < 4; i++) {
     if (vp0.next_vertex[i] <= 0)
       continue;
     if ((temp = DiamondAngleBetweenVectors(
-             vp0.pt, vertex_chains.v[vp0.next_vertex[i]].pt, vp1.pt)) < angle) {
+             vp0.pt, vertex_chains.v[vp0.next_vertex[i]].pt, vp1.pt)) > angle) {
       angle = temp;
       tp = i;
       found = true;
@@ -806,13 +828,13 @@ static void NextVertexIndexForMonotoneChain(VertexChainSlice vertex_chains,
   *ip = tp;
 
   /* Do similar actions for q */
-  angle = 5.0;
+  angle = -1.0;
   found = false;
   for (S32 i = 0; i < 4; i++) {
     if (vp1.next_vertex[i] <= 0)
       continue;
     if ((temp = DiamondAngleBetweenVectors(
-             vp1.pt, vertex_chains.v[vp1.next_vertex[i]].pt, vp0.pt)) < angle) {
+             vp1.pt, vertex_chains.v[vp1.next_vertex[i]].pt, vp0.pt)) > angle) {
       angle = temp;
       tq = i;
       found = true;
