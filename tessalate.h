@@ -411,6 +411,9 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
 #ifdef DEBUG
   ValidateMonotoneChains(MonotoneChainSliceFromArray(monotone_polygon_chains));
   ValidateTrapezoidStructure(trapezoids);
+  for (S32 i = 1; i < segments.count; i += 1) {
+    ASSERT(segments.v[i].is_inserted, "Segment %d not inserted", i)
+  }
 #endif
 
   // position of a vertex in the first chain
@@ -461,6 +464,9 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
   if (!current_trapezoid || TI->visited_trapezoids.v[current_trapezoid]) {
     return;
   }
+#ifdef DEBUG
+  fprintf(stderr, "traversal %d -> %d\n", traversed_from, current_trapezoid);
+#endif
   const Trapezoid t = TI->trapezoids.v[current_trapezoid];
   TI->visited_trapezoids.v[current_trapezoid] = true;
 
@@ -1266,8 +1272,10 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
     // trapezoids t and tn as the upper neighbors of the sole lower trapezoid
     if (trapezoids->data[t].down1 && (!trapezoids->data[t].down0)) {
       // merge the case where we have the sole neighbor in down1
-      trapezoids->data[t].down0 = trapezoids->data->down1;
+      trapezoids->data[t].down0 = trapezoids->data[t].down1;
       trapezoids->data[t].down1 = 0;
+      trapezoids->data[new_trapezoid].down0 = trapezoids->data[new_trapezoid].down1;
+      trapezoids->data[new_trapezoid].down1 = 0;
     }
     if (trapezoids->data[t].down0 && (!trapezoids->data[t].down1)) {
       // continuation of a chain from above
@@ -1503,7 +1511,6 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
             trapezoids->data[new_trapezoid].up0 =
                 trapezoids->data[new_trapezoid].up1 = trapezoids->data[t].up1 =
                     0;
-            trapezoids->data[new_trapezoid].max_y = COORD2_PLUS_INFINITY;
             trapezoids->data[trapezoids->data[t].up0].down0 = t;
           }
         } else /* fresh segment */
@@ -1763,7 +1770,7 @@ static S32 InitQueryStructure(QueryNodeArray *query_structure,
 // generates a random permutation from 1..=n inside the permutation array
 // keeps permutation[0] = 0.
 static void GeneratePermutation(S32Array *permutation) {
-  // srand(time(NULL)); TODO: figure out where to seed prng
+  // srand(2); //TODO: figure out where to seed prng
   const S32 n = permutation->capacity;
   for (S32 i = 0; i < n; i++) {
     S32ArrayPush(permutation, i);
@@ -1959,6 +1966,7 @@ static void ValidateTrapezoidStructure(const TrapezoidSlice ts) {
     if (!t.is_valid) {
       continue;
     }
+    ASSERT(Coord2GreaterThanEqualTo(t.max_y, t.min_y), "min_y > max_y for %d", i)
     if (!(t.left_segment || t.right_segment) &&
         (Coord2EqualTo(t.min_y, COORD2_MINUS_INFINITY) ||
          Coord2EqualTo(t.max_y, COORD2_PLUS_INFINITY))) {
@@ -2086,32 +2094,25 @@ static void ValidateQueryTrapezoidSegmentStructures(
     }
   }
   for (S32 i = 1; i < ts.count; i += 1) {
-    Trapezoid t = ts.v[i];
+    const Trapezoid t = ts.v[i];
     if (!t.is_valid) {
       continue;
     }
-    bool found_min = false;
-    bool found_max = false;
-    if (Coord2EqualTo(t.min_y, COORD2_MINUS_INFINITY)) {
-      found_min = true;
-    } else {
-      for (S32 j = 1; j < vertices.count; j += 1) {
-        if (Coord2EqualTo(t.min_y, vertices.v[j])) {
-          found_min = true;
-        }
-      }
+    if (t.left_segment && t.right_segment) {
+      ASSERT(
+      Coord2EqualTo(vertices.v[segments.v[t.left_segment].v0], t.min_y) ||
+    Coord2EqualTo(vertices.v[segments.v[t.left_segment].v1], t.min_y) ||
+    Coord2EqualTo(vertices.v[segments.v[t.right_segment].v0], t.min_y) ||
+    Coord2EqualTo(vertices.v[segments.v[t.right_segment].v1], t.min_y),
+    "min of trapezoid %d do not match any segment endpoint", i)
+    ASSERT(
+      Coord2EqualTo(vertices.v[segments.v[t.left_segment].v0], t.max_y) ||
+      Coord2EqualTo(vertices.v[segments.v[t.left_segment].v1], t.max_y) ||
+      Coord2EqualTo(vertices.v[segments.v[t.right_segment].v0], t.max_y) ||
+      Coord2EqualTo(vertices.v[segments.v[t.right_segment].v1], t.max_y)
+        , "max of trapezoid %d do not match any segment endpoint", i)
     }
-    if (Coord2EqualTo(t.max_y, COORD2_PLUS_INFINITY)) {
-      found_max = true;
-    } else {
-      for (S32 j = 1; j < vertices.count; j += 1) {
-        if (Coord2EqualTo(t.max_y, vertices.v[j])) {
-          found_max = true;
-        }
-      }
-    }
-    ASSERT(found_min, "unable to find min_y for trapezoid %d", i)
-    ASSERT(found_max, "unable to find max_y for trapezoid %d", i)
+
     if (t.up0 && t.up1 && ts.v[t.up0].right_segment &&
         ts.v[t.up1].right_segment) {
       ASSERT(!VertexLeftOfSegment(vertices, segments, ts.v[t.up0].right_segment,

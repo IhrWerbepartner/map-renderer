@@ -17,7 +17,7 @@ windows: geojson-parser.c triangulate.h arena.c base.h
 map-renderer: geojson-parser.c triangulate.h arena.c base.h
 	gcc $(CFLAGS) $(executable) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME) -O3
 
-unoptimized: geojson-parser.c triangulate.h arena.c base.h
+unoptimized: geojson-parser.c triangulate.h arena.c base.h tessalate.h
 	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME_UNOPTIMIZED) -fsanitize=address
 
 debug: unoptimized
