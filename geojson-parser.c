@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <math.h>
 #include <raylib.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +90,14 @@ typedef struct geo_json {
   GeoPropertiesArray properties; // TODO: add a handle in the types for as an
                                  // index in to the properties array
 } GeoJson;
+
+typedef struct RenderOptions RenderOptions;
+struct RenderOptions {
+  bool show_node_endpoints;
+  bool show_triangulation;
+};
+
+static RenderOptions render_options = {0};
 
 void init_all_arrays(Arena *arena, GeoJson *base, S32 capacity) {
   base->interest_points = PointArrayNew(arena, capacity);
@@ -482,10 +491,11 @@ Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
 }
 
 // iterate over the coordinates omitting the last one as it is
-// identical to the first. input: [a, b, c, d, e] puts [a, b, c, d] into the result array.
-// Returns the index of the coordinate with the lowest y and hightest x.
+// identical to the first. input: [a, b, c, d, e] puts [a, b, c, d] into the
+// result array. Returns the index of the coordinate with the lowest y and
+// hightest x.
 S32 ContourFromJsonArray(const JsonNode *coordinates,
-                             Coord2Array *result_array) {
+                         Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
@@ -494,12 +504,14 @@ S32 ContourFromJsonArray(const JsonNode *coordinates,
               coordinates->children.length)
   }
   S32 min_index = 0;
-  Coord2 min_coordinate = (Coord2) {-(TRIANGULATE_INFINITY), TRIANGULATE_INFINITY };
+  Coord2 min_coordinate =
+      (Coord2){-(TRIANGULATE_INFINITY), TRIANGULATE_INFINITY};
   const JsonNode *point_coords = coordinates->children.first;
   while (point_coords != NULL && point_coords != coordinates->children.last) {
     const Coord2 current_coordinate = Coord2FromJsonArrayNode(point_coords);
     const S32 current_index = Coord2ArrayPush(result_array, current_coordinate);
-    if (current_coordinate.y < min_coordinate.y && current_coordinate.x > min_coordinate.x) {
+    if (current_coordinate.y < min_coordinate.y &&
+        current_coordinate.x > min_coordinate.x) {
       min_index = current_index;
       min_coordinate = current_coordinate;
     }
@@ -511,8 +523,10 @@ S32 ContourFromJsonArray(const JsonNode *coordinates,
 // reverses the coordinates to make them counterclockwise if needed.
 // Returns true/false depending on if this function it did some operation.
 bool MakeCoordinatesCounterClockwise(Coord2Slice coordinates, S32 min_index) {
-  if (CROSS(coordinates.v[min_index], coordinates.v[(min_index + coordinates.count- 1) % coordinates.count],
-    coordinates.v[min_index + 1 % coordinates.count]) > 0) {
+  if (CROSS(coordinates.v[min_index],
+            coordinates
+                .v[(min_index + coordinates.count - 1) % coordinates.count],
+            coordinates.v[min_index + 1 % coordinates.count]) > 0) {
     for (S32 i = 1; i < coordinates.count / 2; i += 1) {
       const S32 opposite_index = coordinates.count - i;
       const Coord2 tmp = coordinates.v[i];
@@ -526,9 +540,10 @@ bool MakeCoordinatesCounterClockwise(Coord2Slice coordinates, S32 min_index) {
 
 // iterate over the coordinates reversed omitting the first one as it is
 // identical to the last. input: [a, b, c, d, e] returns [e, d, c, b]
-// this procedure is used to turn a reversee the clockwise direction of a contour
+// this procedure is used to turn a reversee the clockwise direction of a
+// contour
 void ContourFromJsonArrayReversed(const JsonNode *coordinates,
-                             Coord2Array *result_array) {
+                                  Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
@@ -682,10 +697,13 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
         ERROR_MSG("invalid size for polygon contour: %d",
                   contour_array->children.length)
       }
-      const S32 min_coordinate_index = ContourFromJsonArray(contour_array, &parsed->polygon_coords);
+      const S32 min_coordinate_index =
+          ContourFromJsonArray(contour_array, &parsed->polygon_coords);
       S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
       contour_array = contour_array->next;
-      if (MakeCoordinatesCounterClockwise(Coord2SliceFromArray(&parsed->polygon_coords), min_coordinate_index)) {
+      if (MakeCoordinatesCounterClockwise(
+              Coord2SliceFromArray(&parsed->polygon_coords),
+              min_coordinate_index)) {
         while (contour_array != NULL) {
           S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
           ContourFromJsonArrayReversed(contour_array, &parsed->polygon_coords);
@@ -840,8 +858,7 @@ void draw_multi_points(const GeoJson *coords, Camera2D camera) {
     }
   }
 }
-void draw_line_strings(const GeoJson *coords, Camera2D camera,
-                       int show_node_endpoints) {
+void draw_line_strings(const GeoJson *coords, Camera2D camera) {
   // --------------------- LINE-STRINGS -------------------
   LineStringArray lines = coords->line_strings;
   Coord2Array l_coords = coords->line_string_coords;
@@ -857,7 +874,7 @@ void draw_line_strings(const GeoJson *coords, Camera2D camera,
       DrawLineEx(a, b, 5.0f, BLUE);
       // DEBUG("drawing: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n", a.x,
       // a.y, b.x, b.y)
-      if (show_node_endpoints) {
+      if (render_options.show_node_endpoints) {
         DrawCircleV(a, 5.0f, RED);
         if (j == length - 1) {
           DrawCircleV(b, 5.0f, GREEN);
@@ -886,16 +903,18 @@ void draw_polygons(const GeoJson *coords, Camera2D camera) {
         GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.c]), camera);
 
     DrawTriangle(a, b, c, (Color){0, 0, 255, 100});
-    DrawLineEx(a, b, 3, RED);
-    DrawLineEx(a, c, 3, RED);
-    DrawLineEx(b, c, 3, RED);
-    char buf[8] = {0};
-    sprintf(buf, "%d", t.a);
-    DrawText(buf, (int)a.x, (int)a.y, 50, RED);
-    sprintf(buf, "%d", t.b);
-    DrawText(buf, (int)b.x, (int)b.y, 50, RED);
-    sprintf(buf, "%d", t.c);
-    DrawText(buf, (int)c.x, (int)c.y, 50, RED);
+    if (render_options.show_triangulation) {
+      DrawLineEx(a, b, 3, RED);
+      DrawLineEx(a, c, 3, RED);
+      DrawLineEx(b, c, 3, RED);
+      char buf[8] = {0};
+      sprintf(buf, "%d", t.a);
+      DrawText(buf, (int)a.x, (int)a.y, 50, RED);
+      sprintf(buf, "%d", t.b);
+      DrawText(buf, (int)b.x, (int)b.y, 50, RED);
+      sprintf(buf, "%d", t.c);
+      DrawText(buf, (int)c.x, (int)c.y, 50, RED);
+    }
     // DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f,
     // %03.05f][%03.05f, "
     //"%03.05f]\n",
@@ -966,8 +985,6 @@ int main(int argc, char **argv) {
   InitWindow(screenWidth, screenHeight, "raylib [core] example - 2d camera");
   SetTargetFPS(60);
 
-  int zoom_mode = 0;
-  int show_node_endpoints = 0;
   Camera2D camera = {0};
   camera.offset =
       (Vector2){(float)screenWidth / 2.0f, (float)screenHeight / 2.0f};
@@ -998,14 +1015,12 @@ int main(int argc, char **argv) {
     // Update
     //----------------------------------------------------------------------------------
 
-    if (IsKeyPressed(KEY_ONE))
-      zoom_mode = 0;
-    else if (IsKeyPressed(KEY_TWO))
-      zoom_mode = 1;
     if (IsKeyPressed(KEY_NINE))
-      show_node_endpoints = 0;
+      render_options.show_node_endpoints = false;
     if (IsKeyPressed(KEY_ZERO))
-      show_node_endpoints = 1;
+      render_options.show_node_endpoints = true;
+    if (IsKeyReleased(KEY_T))
+      render_options.show_triangulation ^= true;
 
     // Translate based on mouse right click
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
@@ -1014,48 +1029,24 @@ int main(int argc, char **argv) {
       camera.target = Vector2Add(camera.target, delta);
     }
 
-    if (zoom_mode == 0) {
-      // Zoom based on mouse wheel
-      float wheel = GetMouseWheelMove();
-      if (wheel != 0) {
-        // Get the world point that is under the mouse
-        Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
+    // Zoom based on mouse wheel
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0) {
+      // Get the world point that is under the mouse
+      Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
 
-        // Set the offset to where the mouse is
-        camera.offset = GetMousePosition();
+      // Set the offset to where the mouse is
+      camera.offset = GetMousePosition();
 
-        // Set the target to match, so that the camera maps the world space
-        // point under the cursor to the screen space point under the cursor at
-        // any zoom
-        camera.target = mouseWorldPos;
+      // Set the target to match, so that the camera maps the world space
+      // point under the cursor to the screen space point under the cursor at
+      // any zoom
+      camera.target = mouseWorldPos;
 
-        // Zoom increment
-        // Uses log scaling to provide consistent zoom speed
-        float scale = 0.2f * wheel;
-        camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 100000.0f);
-      }
-    } else {
-      // Zoom based on mouse right click
-      if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-        // Get the world point that is under the mouse
-        Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
-
-        // Set the offset to where the mouse is
-        camera.offset = GetMousePosition();
-
-        // Set the target to match, so that the camera maps the world space
-        // point under the cursor to the screen space point under the cursor at
-        // any zoom
-        camera.target = mouseWorldPos;
-      }
-
-      if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
-        // Zoom increment
-        // Uses log scaling to provide consistent zoom speed
-        float deltaX = GetMouseDelta().x;
-        float scale = 0.005f * deltaX;
-        camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 100000.0f);
-      }
+      // Zoom increment
+      // Uses log scaling to provide consistent zoom speed
+      float scale = 0.2f * wheel;
+      camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 100000.0f);
     }
 
     // Camera reset (zoom and rotation)
@@ -1077,7 +1068,7 @@ int main(int argc, char **argv) {
 
     draw_points(serialized_coords, camera);
     draw_multi_points(serialized_coords, camera);
-    draw_line_strings(serialized_coords, camera, show_node_endpoints);
+    draw_line_strings(serialized_coords, camera);
     draw_multi_line_strings(serialized_coords, camera);
     draw_polygons(serialized_coords, camera);
     draw_multi_polygons(serialized_coords, camera);
