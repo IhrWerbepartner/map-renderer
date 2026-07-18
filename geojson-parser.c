@@ -662,7 +662,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                     contour_array->children.length)
         }
         contour_sizes[i] = contour_array->children.length - 1;
-        contour_from_json_array(contour_array, &parsed->polygon_coords);
+        contour_from_json_array_reverse(contour_array, &parsed->polygon_coords);
         contour_array = contour_array->next;
         i++;
       }

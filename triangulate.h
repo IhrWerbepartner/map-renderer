@@ -1581,6 +1581,10 @@ static int add_segment(int segnum) {
 
   tfirstl = tfirst;
   tlastl = tlast;
+  if (tlastr < 1 || tlastr > MAX_SEGMENTS * 10) {
+    fprintf(stderr, "tlastr is undefined");
+    exit(1);
+  }
   merge_trapezoids(segnum, tfirstl, tlastl, S_LEFT);
   merge_trapezoids(segnum, tfirstr, tlastr, S_RIGHT);
 
