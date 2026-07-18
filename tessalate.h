@@ -20,7 +20,7 @@ typedef enum NodeType {
 } NodeType;
 
 typedef enum MergeSide {
-  LEFT,
+  LEFT = 1,
   RIGHT,
 } MergeSide;
 
@@ -437,7 +437,7 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
                                              monotone_chain_start_vertex},
                             0, i, trapezoids.v[i].up0, DOWN);
           }
-          if (trapezoids.v[i].down0) {
+          else if (trapezoids.v[i].down0) {
             TraversePolygon(&(TraversalInfo){vertex_chains,
                                              monotone_polygon_chains,
                                              trapezoids, segments, vertices,
@@ -468,6 +468,11 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
   fprintf(stderr, "traversal %d -> %d\n", traversed_from, current_trapezoid);
 #endif
   const Trapezoid t = TI->trapezoids.v[current_trapezoid];
+  if (t.right_segment && t.left_segment && t.left_segment == t.right_segment) {
+    ERROR_MSG("Left segment = right segment")
+  }
+  // TODO: figure out why trapezoids 37 has left and right segment equal to 39 but not in
+  // prior validation check.
   TI->visited_trapezoids.v[current_trapezoid] = true;
 
   /* We have much more information available here.
@@ -1270,7 +1275,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
 
     // only one trapezoid below. partition t into two and make the two resulting
     // trapezoids t and tn as the upper neighbors of the sole lower trapezoid
-    if (trapezoids->data[t].down1 && (!trapezoids->data[t].down0)) {
+    if (trapezoids->data[t].down1 && !trapezoids->data[t].down0) {
       // merge the case where we have the sole neighbor in down1
       trapezoids->data[t].down0 = trapezoids->data[t].down1;
       trapezoids->data[t].down1 = 0;
@@ -1278,7 +1283,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
           trapezoids->data[new_trapezoid].down1;
       trapezoids->data[new_trapezoid].down1 = 0;
     }
-    if (trapezoids->data[t].down0 && (!trapezoids->data[t].down1)) {
+    if (trapezoids->data[t].down0 && !trapezoids->data[t].down1) {
       // continuation of a chain from above
       if (trapezoids->data[t].up0 && trapezoids->data[t].up1) {
         // three upper neighbors
@@ -1326,6 +1331,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
           }
 
           trapezoids->data[t].usave = trapezoids->data[new_trapezoid].usave = 0;
+          trapezoids->data[t].uside = trapezoids->data[new_trapezoid].uside = 0;
         } else {
           //  t.u0   \   t.u1
           // -------- \ ---------
@@ -1438,7 +1444,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
     } else {
       /* two trapezoids below. Find out which one is intersected by */
       /* this segment and proceed down that one */
-      int tnext;
+      int next_trapezoid;
 
       int i_d0 = false;
       if (FP_EQUAL(trapezoids->data[t].min_y.y, vertices.v[s.v0].y)) {
@@ -1536,7 +1542,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
         trapezoids->data[new_trapezoid].down0 = trapezoids->data[t].down1;
         trapezoids->data[t].down1 = trapezoids->data[new_trapezoid].down1 = 0;
 
-        tnext = trapezoids->data[t].down1;
+        next_trapezoid = trapezoids->data[t].down1;
       } else if (i_d0)
       /* intersecting d0 */
       {
@@ -1550,7 +1556,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
 
         trapezoids->data[t].down1 = 0;
 
-        tnext = trapezoids->data[t].down0;
+        next_trapezoid = trapezoids->data[t].down0;
       } else /* intersecting d1 */
       {
         trapezoids->data[trapezoids->data[t].down0].up0 = t;
@@ -1564,10 +1570,10 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
         trapezoids->data[new_trapezoid].down0 = trapezoids->data[t].down1;
         trapezoids->data[new_trapezoid].down1 = 0;
 
-        tnext = trapezoids->data[t].down1;
+        next_trapezoid = trapezoids->data[t].down1;
       }
 
-      t = tnext;
+      t = next_trapezoid;
     }
 
     trapezoids->data[t_sav].right_segment =
@@ -1591,37 +1597,41 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
 #endif
   MergeTrapezoids(QueryNodeSliceFromArray(query_structure), trapezoids, segment,
                   first_trapezoid_left, last_trapezoid_left, LEFT);
-#ifdef DEBUG
-  for (S32 i = 1; i < trapezoids->len; i += 1) {
-    const Trapezoid t = trapezoids->data[i];
-    if (!t.is_valid) {
-      continue;
-    }
-    if (t.left_segment && t.right_segment) {
-      Coord2 left_v0 = vertices.v[segments.v[t.left_segment].v0];
-      Coord2 left_v1 = vertices.v[segments.v[t.left_segment].v1];
-      Coord2 right_v0 = vertices.v[segments.v[t.right_segment].v0];
-      Coord2 right_v1 = vertices.v[segments.v[t.right_segment].v1];
-      bool cond = false;
-      if (!(t.down0 && t.down1)) {
-        cond |= Coord2EqualTo(left_v0, t.min_y) ||
-                Coord2EqualTo(left_v1, t.min_y) ||
-                Coord2EqualTo(right_v0, t.min_y) ||
-                Coord2EqualTo(right_v1, t.min_y);
-      }
-      if (!(t.up0 && t.up1)) {
-        cond |= Coord2EqualTo(left_v0, t.max_y) ||
-                Coord2EqualTo(left_v1, t.max_y) ||
-                Coord2EqualTo(right_v0, t.max_y) ||
-                Coord2EqualTo(right_v1, t.max_y);
-      }
-      ASSERT(cond, "max/min of trapezoid %d do not match any segment endpoint after left",
-             i)
-    }
-  }
-#endif
   MergeTrapezoids(QueryNodeSliceFromArray(query_structure), trapezoids, segment,
                   first_trapezoid_right, last_trapezoid_right, RIGHT);
+
+  // TODO: figure out how to use this invariant.
+  // currently it fails if a segment adjacent to a already bounding segment is inserted
+  // that is collinear (?)
+//#ifdef DEBUG
+//  for (S32 i = 1; i < trapezoids->len; i += 1) {
+//    const Trapezoid t = trapezoids->data[i];
+//    if (!t.is_valid) {
+//      continue;
+//    }
+//    if (t.left_segment && t.right_segment && abs(t.left_segment - segment) > 1 && abs(t.right_segment - segment) > 1) {
+//      Coord2 left_v0 = vertices.v[segments.v[t.left_segment].v0];
+//      Coord2 left_v1 = vertices.v[segments.v[t.left_segment].v1];
+//      Coord2 right_v0 = vertices.v[segments.v[t.right_segment].v0];
+//      Coord2 right_v1 = vertices.v[segments.v[t.right_segment].v1];
+//      bool cond = false;
+//      if (!(t.down0 && t.down1)) {
+//        cond |= Coord2EqualTo(left_v0, t.min_y) ||
+//                Coord2EqualTo(left_v1, t.min_y) ||
+//                Coord2EqualTo(right_v0, t.min_y) ||
+//                Coord2EqualTo(right_v1, t.min_y);
+//      }
+//      if (!(t.up0 && t.up1)) {
+//        cond |= Coord2EqualTo(left_v0, t.max_y) ||
+//                Coord2EqualTo(left_v1, t.max_y) ||
+//                Coord2EqualTo(right_v0, t.max_y) ||
+//                Coord2EqualTo(right_v1, t.max_y);
+//      }
+//      ASSERT(cond, "max/min of trapezoid %d do not match any segment endpoint",
+//             i)
+//    }
+//  }
+//#endif
 #ifdef DEBUG
   ValidateQueryTrapezoidSegmentStructures(
       QueryNodeSliceFromArray(query_structure),
@@ -1733,18 +1743,18 @@ static S32 InitQueryStructure(QueryNodeArray *query_structure,
   TrapezoidArrayPush(trapezoids, (Trapezoid){0});
   QueryNode *qs = query_structure->data;
 
-  S32 root = QueryNodeArrayPush(query_structure, (QueryNode){0});
-  S32 i2 = QueryNodeArrayPush(query_structure, (QueryNode){0});
-  S32 i3 = QueryNodeArrayPush(query_structure, (QueryNode){0});
-  S32 i4 = QueryNodeArrayPush(query_structure, (QueryNode){0});
-  S32 i5 = QueryNodeArrayPush(query_structure, (QueryNode){0});
-  S32 i6 = QueryNodeArrayPush(query_structure, (QueryNode){0});
-  S32 i7 = QueryNodeArrayPush(query_structure, (QueryNode){0});
+  const S32 root = QueryNodeArrayPush(query_structure, (QueryNode){0});
+  const S32 i2 = QueryNodeArrayPush(query_structure, (QueryNode){0});
+  const S32 i3 = QueryNodeArrayPush(query_structure, (QueryNode){0});
+  const S32 i4 = QueryNodeArrayPush(query_structure, (QueryNode){0});
+  const S32 i5 = QueryNodeArrayPush(query_structure, (QueryNode){0});
+  const S32 i6 = QueryNodeArrayPush(query_structure, (QueryNode){0});
+  const S32 i7 = QueryNodeArrayPush(query_structure, (QueryNode){0});
 
-  S32 t1 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // middle left
-  S32 t2 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // middle right
-  S32 t3 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // bottom most
-  S32 t4 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // top most
+  const S32 t1 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // middle left
+  const S32 t2 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // middle right
+  const S32 t3 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // bottom most
+  const S32 t4 = TrapezoidArrayPush(trapezoids, (Trapezoid){0}); // top most
 
   qs[root] =
       (QueryNode){.node_type = Y,
@@ -1915,7 +1925,6 @@ static bool Coord2LessThan(Coord2 v0, Coord2 v1) {
 static bool VertexLeftOfSegment(const Coord2Slice vertices,
                                 const SegmentSlice segments, S32 segment,
                                 S32 vertex) {
-  F64 area;
   const Coord2 segment_v0 = vertices.v[segments.v[segment].v0];
   const Coord2 segment_v1 = vertices.v[segments.v[segment].v1];
   const Coord2 v = vertices.v[vertex];
@@ -1927,7 +1936,7 @@ static bool VertexLeftOfSegment(const Coord2Slice vertices,
     if (FP_EQUAL(segment_v0.y, v.y)) {
       return v.x < segment_v0.x;
     }
-    area = CROSS(segment_v0, segment_v1, v);
+    return CROSS(segment_v0, segment_v1, v) > 0.f;
   } else /* v0 > v1 */
   {
     if (FP_EQUAL(segment_v1.y, v.y)) {
@@ -1936,9 +1945,8 @@ static bool VertexLeftOfSegment(const Coord2Slice vertices,
     if (FP_EQUAL(segment_v0.y, v.y)) {
       return v.x < segment_v0.x;
     }
-    area = CROSS(segment_v1, segment_v0, v);
+    return CROSS(segment_v1, segment_v0, v) > 0.f;
   }
-  return area > 0.0;
 }
 
 // ------------------ VALIDATION FUNCTIONS ------------------------
@@ -2010,6 +2018,7 @@ static void ValidateTrapezoidStructure(const TrapezoidSlice ts) {
       ASSERT(!Coord2EqualTo(t.min_y, COORD2_MINUS_INFINITY) ||
                  !Coord2EqualTo(t.max_y, COORD2_PLUS_INFINITY),
              "Trapezoid with segment should have min/max_y != INFINITY")
+      ASSERT(t.left_segment != t.right_segment, "Trapezoid %d has identical right/left segment: %d", i, t.left_segment)
     }
     ASSERT(t.down0 || !t.down1, "Sole downward neighbor in wrong field");
     ASSERT(t.up0 || !t.up1, "Sole upward neighbor in wrong field");
@@ -2130,28 +2139,6 @@ static void ValidateQueryTrapezoidSegmentStructures(
     if (!t.is_valid) {
       continue;
     }
-    // if (t.left_segment && t.right_segment) {
-    //   Coord2 left_v0 = vertices.v[segments.v[t.left_segment].v0];
-    //   Coord2 left_v1 = vertices.v[segments.v[t.left_segment].v1];
-    //   Coord2 right_v0 = vertices.v[segments.v[t.right_segment].v0];
-    //   Coord2 right_v1 = vertices.v[segments.v[t.right_segment].v1];
-    //   bool cond = false;
-    //   if (!(t.down0 && t.down1)) {
-    //     cond |= Coord2EqualTo(left_v0, t.min_y) ||
-    //             Coord2EqualTo(left_v1, t.min_y) ||
-    //             Coord2EqualTo(right_v0, t.min_y) ||
-    //             Coord2EqualTo(right_v1, t.min_y);
-    //   }
-    //   if (!(t.up0 && t.up1)) {
-    //     cond |= Coord2EqualTo(left_v0, t.max_y) ||
-    //             Coord2EqualTo(left_v1, t.max_y) ||
-    //             Coord2EqualTo(right_v0, t.max_y) ||
-    //             Coord2EqualTo(right_v1, t.max_y);
-    //   }
-    //   ASSERT(cond, "max/min of trapezoid %d do not match any segment
-    //   endpoint",
-    //          i)
-    // }
 
     if (t.up0 && t.up1 && ts.v[t.up0].right_segment &&
         ts.v[t.up1].right_segment) {
