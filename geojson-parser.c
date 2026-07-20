@@ -850,7 +850,7 @@ void draw_polygons(GeoJson *coords, Camera2D camera) {
     // we need to specify the triangle in couter-clockwise order but because we
     // reversed the coords the output we get is in clockwise order, therefore
     // change b, and c.
-    DrawTriangle(a, b, c, BLUE);
+    DrawTriangle(a, b, c, (Color){0, 0, 255, 100});
     DrawLineEx(a, b, 3.f, RED);
     DrawLineEx(a, c, 3.f, RED);
     DrawLineEx(b, c, 3.f, RED);
