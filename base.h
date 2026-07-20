@@ -20,6 +20,11 @@
 
 #define Min(A, B) (((A) < (B)) ? (A) : (B))
 #define Max(A, B) (((A) > (B)) ? (A) : (B))
+#define CROSS(v0, v1, v2)                                                      \
+  (((v1).x - (v0).x) * ((v2).y - (v0).y) -                                     \
+   ((v1).y - (v0).y) * ((v2).x - (v0).x))
+
+#define DOT(v0, v1) ((v0).x * (v1).x + (v0).y * (v1).y)
 
 typedef uint8_t U8;
 typedef uint16_t U16;
@@ -41,7 +46,7 @@ typedef struct coord2 {
 } Coord2;
 
 #define Vector2FromCoord2(coord)                                               \
-  (Vector2) { .x = (F32)(coord).x, .y = -(F32)(coord).y }
+  (Vector2) { .x = (F32)(coord).x, .y = (F32)(coord).y }
 
 typedef struct triangle {
   S32 a, b, c;

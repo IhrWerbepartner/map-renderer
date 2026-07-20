@@ -98,11 +98,6 @@ enum MonotoneBaseSide {
   (Coord2) { .x = TRIANGULATE_INFINITY, .y = TRIANGULATE_INFINITY }
 #define C_EPS 1.11e-16
 #define FP_EQUAL(s, t) (fabs((s) - (t)) <= C_EPS)
-#define CROSS(v0, v1, v2)                                                      \
-  (((v1).x - (v0).x) * ((v2).y - (v0).y) -                                     \
-   ((v1).y - (v0).y) * ((v2).x - (v0).x))
-
-#define DOT(v0, v1) ((v0).x * (v1).x + (v0).y * (v1).y)
 
 static void GeneratePermutation(S32Array *permutation);
 static S32 RandomSegment(S32Array *permutation);
@@ -180,6 +175,10 @@ static void ValidateMonotonePolygon(VertexChainSlice vertex_chains,
 // as indices into the coords array.
 void TessalatePolygon(TriangleArray *triangles, const Coord2Slice coords,
                       const S32Slice contour_sizes) {
+  ASSERT(coords.v[0].x == 0.f && coords.v[0].y == 0.f, "Coords[0] not zeroed")
+#ifdef DEBUG
+  InitWindow(1920, 1080, "Map Renderer - Triangulation Debug Window");
+#endif
   Temp_Arena_Memory scratch = GetScratch();
   QueryNodeArray query_structure =
       QueryNodeArrayNew(scratch.arena, 8 * coords.count);
@@ -235,6 +234,14 @@ void TessalatePolygon(TriangleArray *triangles, const Coord2Slice coords,
       MonotoneChainSliceFromArray(&monotone_polygon_chains),
       S32SliceFromArray(&monotone_chain_start_vertex), triangles);
   temp_arena_memory_end(scratch);
+#ifdef DEBUG
+  CloseWindow();
+  for (S32 i = 0; i < triangles->len; i += 1) {
+    Triangle t = triangles->data[i];
+    ASSERT(CROSS(coords.v[t.a], coords.v[t.b], coords.v[t.c]) > 0,
+           "Triangle [%d, %d, %d] not counter-clockwise", t.a, t.b, t.c)
+  }
+#endif
 }
 
 /* For each monotone polygon, find the ymax and ymin (to determine the
@@ -370,6 +377,10 @@ static void TriangulateSingleMonotonePolygon(VertexChainSlice vertex_chains,
       // convex corner: cut if off
       const S32 v2 = S32ArrayPop(&reflex_chain);
       const S32 v1 = S32ArrayPop(&reflex_chain);
+      ASSERT(CROSS(vertex_chains.v[v1].pt, vertex_chains.v[v2].pt,
+                   vertex_chains.v[v].pt) > 0,
+             "Triangle [%d, %d, %d] not in counter clockwise order\n", v1, v2,
+             v)
       TriangleArrayPush(triangles, (Triangle){v1, v2, v});
       S32ArrayPush(&reflex_chain, v1);
     } else { // non-convex or reflex-chain empty: add v to the chain
@@ -381,6 +392,9 @@ static void TriangulateSingleMonotonePolygon(VertexChainSlice vertex_chains,
   // reached the bottom vertex. Add in the triangle formed
   S32 v2 = S32ArrayPop(&reflex_chain);
   S32 v1 = S32ArrayPop(&reflex_chain);
+  ASSERT(CROSS(vertex_chains.v[v1].pt, vertex_chains.v[v2].pt,
+               vertex_chains.v[v].pt) > 0,
+         "Triangle [%d, %d, %d] not in counter clockwise order\n", v1, v2, v)
   TriangleArrayPush(triangles, (Triangle){v1, v2, v});
 
   temp_arena_memory_end(scratch);
@@ -436,8 +450,7 @@ static void MonotonateTrapezoids(VertexChainArray *vertex_chains,
                                              visited_trapezoids,
                                              monotone_chain_start_vertex},
                             0, i, trapezoids.v[i].up0, DOWN);
-          }
-          else if (trapezoids.v[i].down0) {
+          } else if (trapezoids.v[i].down0) {
             TraversePolygon(&(TraversalInfo){vertex_chains,
                                              monotone_polygon_chains,
                                              trapezoids, segments, vertices,
@@ -471,8 +484,8 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
   if (t.right_segment && t.left_segment && t.left_segment == t.right_segment) {
     ERROR_MSG("Left segment = right segment")
   }
-  // TODO: figure out why trapezoids 37 has left and right segment equal to 39 but not in
-  // prior validation check.
+  // TODO: figure out why trapezoids 37 has left and right segment equal to 39
+  // but not in prior validation check.
   TI->visited_trapezoids.v[current_trapezoid] = true;
 
   /* We have much more information available here.
@@ -950,6 +963,11 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
   // initialized
 #ifdef DEBUG
   ValidateQueryStructure(QueryNodeSliceFromArray(query_structure));
+  Camera2D camera = {.offset =
+                         (Vector2){(float)1920 / 2.0f, (float)1080 / 2.0f},
+                     .rotation = 0.0f,
+                     .zoom = 2940.0f,
+                     .target = {1.5429f, -42.5714f}};
 #endif
   const S32 segment_count = segments->len - 1;
   S32 query_root = InitQueryStructure(query_structure, vertices, trapezoids,
@@ -972,6 +990,18 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
           QueryNodeSliceFromArray(query_structure),
           TrapezoidSliceFromArray(trapezoids), SegmentSliceFromArray(segments),
           vertices);
+      BeginDrawing();
+      for (S32 s = 1; s < segments->len; s += 1) {
+        Segment seg = segments->data[s];
+        if (seg.is_inserted) {
+          Vector2 a =
+              GetWorldToScreen2D(Vector2FromCoord2(vertices.v[seg.v0]), camera);
+          Vector2 b =
+              GetWorldToScreen2D(Vector2FromCoord2(vertices.v[seg.v1]), camera);
+          DrawLineEx(a, b, 5.0f, BLUE);
+        }
+      }
+      EndDrawing();
 #endif
       AddSegment(query_structure, vertices, SegmentSliceFromArray(segments),
                  trapezoids, RandomSegment(permutation));
@@ -1601,37 +1631,39 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
                   first_trapezoid_right, last_trapezoid_right, RIGHT);
 
   // TODO: figure out how to use this invariant.
-  // currently it fails if a segment adjacent to a already bounding segment is inserted
-  // that is collinear (?)
-//#ifdef DEBUG
-//  for (S32 i = 1; i < trapezoids->len; i += 1) {
-//    const Trapezoid t = trapezoids->data[i];
-//    if (!t.is_valid) {
-//      continue;
-//    }
-//    if (t.left_segment && t.right_segment && abs(t.left_segment - segment) > 1 && abs(t.right_segment - segment) > 1) {
-//      Coord2 left_v0 = vertices.v[segments.v[t.left_segment].v0];
-//      Coord2 left_v1 = vertices.v[segments.v[t.left_segment].v1];
-//      Coord2 right_v0 = vertices.v[segments.v[t.right_segment].v0];
-//      Coord2 right_v1 = vertices.v[segments.v[t.right_segment].v1];
-//      bool cond = false;
-//      if (!(t.down0 && t.down1)) {
-//        cond |= Coord2EqualTo(left_v0, t.min_y) ||
-//                Coord2EqualTo(left_v1, t.min_y) ||
-//                Coord2EqualTo(right_v0, t.min_y) ||
-//                Coord2EqualTo(right_v1, t.min_y);
-//      }
-//      if (!(t.up0 && t.up1)) {
-//        cond |= Coord2EqualTo(left_v0, t.max_y) ||
-//                Coord2EqualTo(left_v1, t.max_y) ||
-//                Coord2EqualTo(right_v0, t.max_y) ||
-//                Coord2EqualTo(right_v1, t.max_y);
-//      }
-//      ASSERT(cond, "max/min of trapezoid %d do not match any segment endpoint",
-//             i)
-//    }
-//  }
-//#endif
+  // currently it fails if a segment adjacent to a already bounding segment is
+  // inserted that is collinear (?)
+// #ifdef DEBUG
+//   for (S32 i = 1; i < trapezoids->len; i += 1) {
+//     const Trapezoid t = trapezoids->data[i];
+//     if (!t.is_valid) {
+//       continue;
+//     }
+//     if (t.left_segment && t.right_segment && abs(t.left_segment - segment) >
+//     1 && abs(t.right_segment - segment) > 1) {
+//       Coord2 left_v0 = vertices.v[segments.v[t.left_segment].v0];
+//       Coord2 left_v1 = vertices.v[segments.v[t.left_segment].v1];
+//       Coord2 right_v0 = vertices.v[segments.v[t.right_segment].v0];
+//       Coord2 right_v1 = vertices.v[segments.v[t.right_segment].v1];
+//       bool cond = false;
+//       if (!(t.down0 && t.down1)) {
+//         cond |= Coord2EqualTo(left_v0, t.min_y) ||
+//                 Coord2EqualTo(left_v1, t.min_y) ||
+//                 Coord2EqualTo(right_v0, t.min_y) ||
+//                 Coord2EqualTo(right_v1, t.min_y);
+//       }
+//       if (!(t.up0 && t.up1)) {
+//         cond |= Coord2EqualTo(left_v0, t.max_y) ||
+//                 Coord2EqualTo(left_v1, t.max_y) ||
+//                 Coord2EqualTo(right_v0, t.max_y) ||
+//                 Coord2EqualTo(right_v1, t.max_y);
+//       }
+//       ASSERT(cond, "max/min of trapezoid %d do not match any segment
+//       endpoint",
+//              i)
+//     }
+//   }
+// #endif
 #ifdef DEBUG
   ValidateQueryTrapezoidSegmentStructures(
       QueryNodeSliceFromArray(query_structure),
@@ -1657,15 +1689,17 @@ static void MergeTrapezoids(QueryNodeSlice query_structure,
     S32 next_trapezoid;
     bool next_trapezoid_shares_segment;
     if (side == LEFT) {
-      next_trapezoid_shares_segment = ((next_trapezoid = trapezoids->data[t].down0) &&
-               trapezoids->data[next_trapezoid].right_segment == segment) ||
-              ((next_trapezoid = trapezoids->data[t].down1) &&
-               trapezoids->data[next_trapezoid].right_segment == segment);
+      next_trapezoid_shares_segment =
+          ((next_trapezoid = trapezoids->data[t].down0) &&
+           trapezoids->data[next_trapezoid].right_segment == segment) ||
+          ((next_trapezoid = trapezoids->data[t].down1) &&
+           trapezoids->data[next_trapezoid].right_segment == segment);
     } else {
-      next_trapezoid_shares_segment = ((next_trapezoid = trapezoids->data[t].down0) &&
-               trapezoids->data[next_trapezoid].left_segment == segment) ||
-              ((next_trapezoid = trapezoids->data[t].down1) &&
-               trapezoids->data[next_trapezoid].left_segment == segment);
+      next_trapezoid_shares_segment =
+          ((next_trapezoid = trapezoids->data[t].down0) &&
+           trapezoids->data[next_trapezoid].left_segment == segment) ||
+          ((next_trapezoid = trapezoids->data[t].down1) &&
+           trapezoids->data[next_trapezoid].left_segment == segment);
     }
     if (next_trapezoid_shares_segment &&
         trapezoids->data[t].left_segment ==
@@ -1719,7 +1753,7 @@ static void MergeTrapezoids(QueryNodeSlice query_structure,
       t = next_trapezoid;
     }
   }
-  }
+}
 
 /* Initialise the query structure (Q) and the trapezoid table (T)
  * when the first segment is added to start the trapezoidation. The
@@ -2018,7 +2052,9 @@ static void ValidateTrapezoidStructure(const TrapezoidSlice ts) {
       ASSERT(!Coord2EqualTo(t.min_y, COORD2_MINUS_INFINITY) ||
                  !Coord2EqualTo(t.max_y, COORD2_PLUS_INFINITY),
              "Trapezoid with segment should have min/max_y != INFINITY")
-      ASSERT(t.left_segment != t.right_segment, "Trapezoid %d has identical right/left segment: %d", i, t.left_segment)
+      ASSERT(t.left_segment != t.right_segment,
+             "Trapezoid %d has identical right/left segment: %d", i,
+             t.left_segment)
     }
     ASSERT(t.down0 || !t.down1, "Sole downward neighbor in wrong field");
     ASSERT(t.up0 || !t.up1, "Sole upward neighbor in wrong field");
@@ -2104,7 +2140,7 @@ static void ValidateSegmentStructure(SegmentSlice segments) {
 static void ValidateQueryTrapezoidSegmentStructures(
     const QueryNodeSlice qs, const TrapezoidSlice ts,
     const SegmentSlice segments, const Coord2Slice vertices) {
-  //ValidateQueryStructure(qs);
+  // ValidateQueryStructure(qs);
   ValidateTrapezoidStructure(ts);
   ValidateSegmentStructure(segments);
   for (S32 i = 1; i < qs.count; i += 1) {

@@ -486,7 +486,7 @@ Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
   }
   return (Coord2){
       .x = x_coordinate->num.dbl_value,
-      .y = y_coordinate->num.dbl_value,
+      .y = -y_coordinate->num.dbl_value,
   };
 }
 
@@ -527,7 +527,7 @@ bool MakeCoordinatesCounterClockwise(Coord2Slice coordinates, S32 min_index) {
             coordinates
                 .v[(min_index + coordinates.count - 1) % coordinates.count],
             coordinates.v[min_index + 1 % coordinates.count]) > 0) {
-    for (S32 i = 1; i < coordinates.count / 2; i += 1) {
+    for (S32 i = 1; i <= coordinates.count / 2; i += 1) {
       const S32 opposite_index = coordinates.count - i;
       const Coord2 tmp = coordinates.v[i];
       coordinates.v[i] = coordinates.v[opposite_index];
@@ -901,6 +901,10 @@ void draw_polygons(const GeoJson *coords, Camera2D camera) {
         GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.b]), camera);
     Vector2 c =
         GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.c]), camera);
+    if (CROSS(a, b, c) <= 0) {
+      fprintf(stderr, "ERROR: Triangle %d -> %d -> %d, not counter clockwise\n",
+              t.a, t.b, t.c);
+    }
 
     DrawTriangle(a, b, c, (Color){0, 0, 255, 100});
     if (render_options.show_triangulation) {
@@ -982,14 +986,14 @@ int main(int argc, char **argv) {
   const int screenWidth = 1920;
   const int screenHeight = 1080;
 
-  InitWindow(screenWidth, screenHeight, "raylib [core] example - 2d camera");
+  InitWindow(screenWidth, screenHeight, "Map Renderer");
   SetTargetFPS(60);
 
-  Camera2D camera = {0};
-  camera.offset =
-      (Vector2){(float)screenWidth / 2.0f, (float)screenHeight / 2.0f};
-  camera.rotation = 0.0f;
-  camera.zoom = 4.0f;
+  Camera2D camera = {
+      .offset = {(float)screenWidth / 2.0f, (float)screenHeight / 2.0f},
+      .rotation = 0.0f,
+      .zoom = 4.0f,
+      .target = {0, 0}};
 
   {
     LineStringArray lines = serialized_coords->line_strings;
