@@ -46,7 +46,7 @@ typedef struct coord2 {
 } Coord2;
 
 #define Vector2FromCoord2(coord)                                               \
-  (Vector2) { .x = (F32)(coord).x, .y = (F32)(coord).y }
+  (Vector2) { .x = (F32)(coord).x, .y = -(F32)(coord).y }
 
 typedef struct triangle {
   S32 a, b, c;

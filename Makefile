@@ -15,7 +15,7 @@ windows: geojson-parser.c triangulate.h arena.c base.h
 	zig cc -o render.exe geojson-parser.c -I"C:\raylib\w64devkit\include" "C:\raylib\w64devkit\lib\libraylib.a" -lopengl32 -lgdi32 -lwinmm -g
 
 map-renderer: geojson-parser.c triangulate.h arena.c base.h
-	gcc $(CFLAGS) $(executable) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME) -O3
+	gcc $(CFLAGS) $(executable) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME) -O2
 
 unoptimized: geojson-parser.c triangulate.h arena.c base.h tessalate.h
 	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME_UNOPTIMIZED)

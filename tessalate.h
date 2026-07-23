@@ -2,6 +2,7 @@
 #include "arena.c"
 #include "base.h"
 #include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -163,7 +164,8 @@ static void ValidateQueryTrapezoidSegmentStructures(QueryNodeSlice qs,
                                                     Coord2Slice vertices);
 static void ValidateMonotoneChains(const MonotoneChainSlice chains);
 static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
-                                            const MonotoneChainSlice mc);
+                                            const MonotoneChainSlice mc,
+                                            const S32Slice start_vertices);
 static void ValidateMonotonePolygon(VertexChainSlice vertex_chains,
                                     MonotoneChainSlice mc, S32 y_max_index,
                                     MonotoneBaseSide side);
@@ -252,15 +254,38 @@ static void TriangulateMonotonePolygons(
     VertexChainSlice vertex_chains, MonotoneChainSlice monotone_polygon_chains,
     S32Slice monotone_chain_start_vertex, TriangleArray *op) {
 #ifdef DEBUG
+  ValidateMonotoneAndVertexChains(vertex_chains, monotone_polygon_chains,
+                                  monotone_chain_start_vertex);
+  Camera2D camera = {.offset =
+                         (Vector2){(float)1920 / 2.0f, (float)1080 / 2.0f},
+                     .rotation = 0.0f,
+                     .zoom = 4368.0f,
+                     .target = {1.5786f, -42.5744f}};
+  BeginDrawing();
+  ClearBackground(BLACK);
+  EndDrawing();
   for (S32 i = 0; i < monotone_chain_start_vertex.count; i++) {
     fprintf(stderr, "\n\nPolygon %d: ", i);
     S32 first_vertex =
         monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].vertex;
     S32 p = monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].next;
+    BeginDrawing();
+    Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(vertex_chains.v[first_vertex].pt), camera);
+    Vector2 b = GetWorldToScreen2D(Vector2FromCoord2(vertex_chains.v[monotone_polygon_chains.v[p].vertex].pt), camera);
+    DrawLineEx(a, b, 5.0f, GREEN);
+    EndDrawing();
     fprintf(stderr, "%d ",
             monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].vertex);
     while (monotone_polygon_chains.v[p].vertex != first_vertex) {
       fprintf(stderr, "%d ", monotone_polygon_chains.v[p].vertex);
+      Vector2 a = GetWorldToScreen2D(
+          Vector2FromCoord2(vertex_chains.v[monotone_polygon_chains.v[p].vertex].pt), camera);
+      Vector2 b = GetWorldToScreen2D(
+          Vector2FromCoord2(vertex_chains.v[monotone_polygon_chains.v[monotone_polygon_chains.v[p].next].vertex].pt),
+          camera);
+    BeginDrawing();
+      DrawLineEx(a, b, 5.0f, GREEN);
+    EndDrawing();
       p = monotone_polygon_chains.v[p].next;
     }
   }
@@ -676,16 +701,16 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
           TraversePolygon(TI, current_monotone, t.up1, current_trapezoid, UP);
           TraversePolygon(TI, current_monotone, t.down1, current_trapezoid,
                           DOWN);
-          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid,
-                          DOWN);
-          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
+          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid,
+                          UP);
+          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
         } else {
           S32 new_monotone = SplitPolygonByDiagonal(
               VertexChainSliceFromArray(TI->vertex_chains),
               TI->monotone_polygon_chains, TI->monotone_chain_start_vertex,
               current_monotone, v0, v1);
-          TraversePolygon(TI, current_monotone, t.up0, current_trapezoid, UP);
-          TraversePolygon(TI, new_monotone, t.down0, current_trapezoid, DOWN);
+          TraversePolygon(TI, current_monotone, t.down0, current_trapezoid, DOWN);
+          TraversePolygon(TI, new_monotone, t.up0, current_trapezoid, UP);
           TraversePolygon(TI, new_monotone, t.down1, current_trapezoid, DOWN);
           TraversePolygon(TI, new_monotone, t.up1, current_trapezoid, UP);
         }
@@ -878,6 +903,11 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
                                   S32Array *monotone_chain_start_vertex,
                                   S32 current_monotone_polygon, S32 v0,
                                   S32 v1) {
+#ifdef DEBUG
+  ValidateMonotoneAndVertexChains(
+      vertex_chains, MonotoneChainSliceFromArray(monotone_polygon_chains),
+      S32SliceFromArray(monotone_chain_start_vertex));
+#endif
   S32 ip, iq;
 
   VertexChain *vp0 = &vertex_chains.v[v0];
@@ -949,7 +979,8 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
   const S32 new_monotone = S32ArrayPush(monotone_chain_start_vertex, i);
 #ifdef DEBUG
   ValidateMonotoneAndVertexChains(
-      vertex_chains, MonotoneChainSliceFromArray(monotone_polygon_chains));
+      vertex_chains, MonotoneChainSliceFromArray(monotone_polygon_chains),
+      S32SliceFromArray(monotone_chain_start_vertex));
 #endif
   return new_monotone;
 }
@@ -966,8 +997,8 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
   Camera2D camera = {.offset =
                          (Vector2){(float)1920 / 2.0f, (float)1080 / 2.0f},
                      .rotation = 0.0f,
-                     .zoom = 2940.0f,
-                     .target = {1.5429f, -42.5714f}};
+                     .zoom = 4368.0f,
+                     .target = {1.5786f, -42.5744f}};
 #endif
   const S32 segment_count = segments->len - 1;
   S32 query_root = InitQueryStructure(query_structure, vertices, trapezoids,
@@ -1052,6 +1083,18 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
         QueryNodeSliceFromArray(query_structure),
         TrapezoidSliceFromArray(trapezoids), SegmentSliceFromArray(segments),
         vertices);
+    BeginDrawing();
+    for (S32 s = 1; s < segments->len; s += 1) {
+      Segment seg = segments->data[s];
+      if (seg.is_inserted) {
+        Vector2 a =
+            GetWorldToScreen2D(Vector2FromCoord2(vertices.v[seg.v0]), camera);
+        Vector2 b =
+            GetWorldToScreen2D(Vector2FromCoord2(vertices.v[seg.v1]), camera);
+        DrawLineEx(a, b, 5.0f, BLUE);
+      }
+    }
+    EndDrawing();
 #endif
   }
 }
@@ -2208,7 +2251,8 @@ static void ValidateMonotoneChains(const MonotoneChainSlice chains) {
   }
 }
 static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
-                                            const MonotoneChainSlice mc) {
+                                            const MonotoneChainSlice mc,
+                                            const S32Slice start_vertices) {
   ValidateMonotoneChains(mc);
   for (S32 i = 1; i < vc.count; i += 1) {
     for (S32 j = 0; j < vc.v[i].next_free; j += 1) {
@@ -2216,6 +2260,22 @@ static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
              "vc -> mc and mc -> vc indices do not match")
     }
   }
+  Temp_Arena_Memory scratch = GetScratch();
+  S32Array found_vertices = S32ArrayNew(scratch.arena, vc.count);
+  found_vertices.len = vc.count;
+  for (S32 i = 0; i < start_vertices.count; i += 1) {
+    S32 start_vertex = mc.v[start_vertices.v[i]].vertex;
+      found_vertices.data[mc.v[start_vertex].vertex] = true;
+    S32 current_vertex = mc.v[start_vertices.v[i]].next;
+    while (mc.v[current_vertex].vertex != start_vertex) {
+      found_vertices.data[mc.v[current_vertex].vertex] = true;
+      current_vertex = mc.v[current_vertex].next;
+    }
+  }
+  for (S32 i = 1; i < found_vertices.len; i += 1) {
+    ASSERT(found_vertices.data[i], "Vertex %d not found in monotone chains", i);
+  }
+  temp_arena_memory_end(scratch);
 }
 
 static void ValidateMonotonePolygon(VertexChainSlice vertex_chains,
@@ -2240,18 +2300,12 @@ static void ValidateMonotonePolygon(VertexChainSlice vertex_chains,
           mc.v[y_min_index].vertex);
 
   while (current_vertex != y_min_index) {
-    if (!Coord2LessThan(vertex_chains.v[mc.v[current_vertex].vertex].pt,
-                        y_current)) {
-      fprintf(stderr, "Polygon y_max_index: %d is not a monotone mountain\n",
-              y_max_index);
-    }
-    //      ASSERT(Coord2LessThan(vertex_chains.v[mc.v[current_vertex].vertex].pt,
-    //                            y_current),
-    //             "Polygon is not a monotone mountain");
-    // ASSERT(Coord2GreaterThanEqualTo(
-    //           vertex_chains.v[mc.v[current_vertex].vertex].pt, y_min),
-    //       "Polygon vertex %d smaller than y_min",
-    //       mc.v[current_vertex].vertex);
+    ASSERT(Coord2LessThan(vertex_chains.v[mc.v[current_vertex].vertex].pt,
+                          y_current),
+           "Polygon is not a monotone mountain");
+    ASSERT(Coord2GreaterThanEqualTo(
+               vertex_chains.v[mc.v[current_vertex].vertex].pt, y_min),
+           "Polygon vertex %d smaller than y_min", mc.v[current_vertex].vertex);
     y_current = vertex_chains.v[mc.v[current_vertex].vertex].pt;
     if (side == BASE_RIGHT) {
       current_vertex = mc.v[current_vertex].next;

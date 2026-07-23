@@ -486,7 +486,7 @@ Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
   }
   return (Coord2){
       .x = x_coordinate->num.dbl_value,
-      .y = -y_coordinate->num.dbl_value,
+      .y = y_coordinate->num.dbl_value,
   };
 }
 
@@ -572,7 +572,7 @@ void Coord2ArrayFromJsonArray(const JsonNode *coordinates,
 }
 
 GeoJson *serialize(Arena *arena, JsonNode *root) {
-  GeoJson *parsed = (GeoJson *)arena_alloc(arena, sizeof(GeoJson));
+  GeoJson *render_data = (GeoJson *)arena_alloc(arena, sizeof(GeoJson));
   if (root->type != JSON_NULL || root->children.length != 1) {
     ERROR_MSG("invalid json")
   }
@@ -592,7 +592,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
     ERROR_MSG("invalid geojson features")
   }
   // init_all_arrays(arena, parsed, features->children.length); TODO:
-  init_all_arrays(arena, parsed, 100000);
+  init_all_arrays(arena, render_data, 100000);
   JsonNode *current_child = features->children.first;
 
   // parse all "Features" in their appropriate arrays
@@ -626,58 +626,59 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
     // "type" : "Point" parsing
     if (String8Equals(geometry_type->text_value, String8FromCString("Point"))) {
       PointArrayPush(
-          &parsed->interest_points,
+          &render_data->interest_points,
           (Point){.coordinates = Coord2FromJsonArrayNode(coordinates)});
     }
 
     if (String8Equals(geometry_type->text_value,
                       String8FromCString("MultiPoint"))) {
       MultiPoint multi_point = (MultiPoint){
-          .coordinates = (Slice){.start = parsed->multi_points.len,
+          .coordinates = (Slice){.start = render_data->multi_points.len,
                                  .length = coordinates->children.length},
       };
-      Coord2ArrayFromJsonArray(coordinates, &parsed->multi_point_coords);
+      Coord2ArrayFromJsonArray(coordinates, &render_data->multi_point_coords);
       // assert that we inserted the correct amount of points
       assert(multi_point.coordinates.start + multi_point.coordinates.length ==
-             parsed->multi_point_coords.len);
-      MultiPointArrayPush(&parsed->multi_points, multi_point);
+             render_data->multi_point_coords.len);
+      MultiPointArrayPush(&render_data->multi_points, multi_point);
     }
 
     if (String8Equals(geometry_type->text_value,
                       String8FromCString("LineString"))) {
       LineString line_string = (LineString){
-          .coordinates = (Slice){.start = parsed->line_string_coords.len,
+          .coordinates = (Slice){.start = render_data->line_string_coords.len,
                                  .length = coordinates->children.length},
       };
-      Coord2ArrayFromJsonArray(coordinates, &parsed->line_string_coords);
+      Coord2ArrayFromJsonArray(coordinates, &render_data->line_string_coords);
       ASSERT(line_string.coordinates.start + line_string.coordinates.length ==
-                 parsed->line_string_coords.len,
+                 render_data->line_string_coords.len,
              "assert failed at line: %d", __LINE__)
-      LineStringArrayPush(&parsed->line_strings, line_string);
+      LineStringArrayPush(&render_data->line_strings, line_string);
     }
 
     if (String8Equals(geometry_type->text_value,
                       String8FromCString("MultiLineString"))) {
       JsonNode *line_string = coordinates->children.first;
       MultiLineString mls = (MultiLineString){
-          .coordinates = (Slice){.start = parsed->multi_line_string_array.len,
-                                 .length = coordinates->children.length},
+          .coordinates =
+              (Slice){.start = render_data->multi_line_string_array.len,
+                      .length = coordinates->children.length},
       };
       while (line_string != NULL) {
         LineString ls = (LineString){
             .coordinates =
-                (Slice){.start = parsed->multi_line_string_coords.len,
+                (Slice){.start = render_data->multi_line_string_coords.len,
                         .length = coordinates->children.length},
         };
         Coord2ArrayFromJsonArray(coordinates,
-                                 &parsed->multi_line_string_coords);
+                                 &render_data->multi_line_string_coords);
         ASSERT(ls.coordinates.start + ls.coordinates.length ==
-                   parsed->multi_line_string_coords.len,
+                   render_data->multi_line_string_coords.len,
                "assert failed at line: %d", __LINE__)
-        LineStringArrayPush(&parsed->multi_line_string_array, ls);
+        LineStringArrayPush(&render_data->multi_line_string_array, ls);
         line_string = line_string->next;
       }
-      MultiLineStringArrayPush(&parsed->multi_line_strings, mls);
+      MultiLineStringArrayPush(&render_data->multi_line_strings, mls);
     }
 
     if (String8Equals(geometry_type->text_value,
@@ -685,12 +686,12 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
       S32 contour_count = coordinates->children.length;
       S32Array contour_sizes = S32ArrayNew(scratch.arena, contour_count);
       Coord2 *vertices =
-          &parsed->polygon_coords.data[parsed->polygon_coords.len];
-      S32 first_coordinate_idx = parsed->polygon_coords.len;
-      S32 first_triangle_idx = parsed->polygon_triangles.len;
+          &render_data->polygon_coords.data[render_data->polygon_coords.len];
+      S32 first_coordinate_idx = render_data->polygon_coords.len;
+      S32 first_triangle_idx = render_data->polygon_triangles.len;
 
       // create emtpy slot at vertices[0] for triangulation
-      Coord2ArrayPush(&parsed->polygon_coords, (Coord2){0.f, 0.f});
+      Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
 
       JsonNode *contour_array = coordinates->children.first;
       if (contour_array == NULL || contour_array->children.length <= 1) {
@@ -698,46 +699,58 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                   contour_array->children.length)
       }
       const S32 min_coordinate_index =
-          ContourFromJsonArray(contour_array, &parsed->polygon_coords);
+          ContourFromJsonArray(contour_array, &render_data->polygon_coords);
       S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
       contour_array = contour_array->next;
       if (MakeCoordinatesCounterClockwise(
-              Coord2SliceFromArray(&parsed->polygon_coords),
+              Coord2SliceFromArray(&render_data->polygon_coords),
               min_coordinate_index)) {
         while (contour_array != NULL) {
           S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
-          ContourFromJsonArrayReversed(contour_array, &parsed->polygon_coords);
+          ContourFromJsonArrayReversed(contour_array,
+                                       &render_data->polygon_coords);
           contour_array = contour_array->next;
         }
       } else {
         while (contour_array != NULL) {
           S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
-          ContourFromJsonArray(contour_array, &parsed->polygon_coords);
+          ContourFromJsonArray(contour_array, &render_data->polygon_coords);
           contour_array = contour_array->next;
         }
       }
 
-      TessalatePolygon(&parsed->polygon_triangles,
+      TessalatePolygon(&render_data->polygon_triangles,
                        (Coord2Slice){.v = vertices,
-                                     .count = parsed->polygon_coords.len -
+                                     .count = render_data->polygon_coords.len -
                                               first_coordinate_idx},
                        S32SliceFromArray(&contour_sizes));
 
       // we need to fix the indices as they are local to a polygon, but they now
       // point into the global coordinate array.
-      for (S32 j = first_triangle_idx; j < parsed->polygon_triangles.len; j++) {
-        parsed->polygon_triangles.data[j].a += first_coordinate_idx;
-        parsed->polygon_triangles.data[j].b += first_coordinate_idx;
-        parsed->polygon_triangles.data[j].c += first_coordinate_idx;
-        assert(parsed->polygon_triangles.data[j].a > first_coordinate_idx &&
-               parsed->polygon_triangles.data[j].a <
-                   parsed->polygon_coords.len);
-        assert(parsed->polygon_triangles.data[j].b > first_coordinate_idx &&
-               parsed->polygon_triangles.data[j].b <
-                   parsed->polygon_coords.len);
-        assert(parsed->polygon_triangles.data[j].c > first_coordinate_idx &&
-               parsed->polygon_triangles.data[j].c <
-                   parsed->polygon_coords.len);
+      for (S32 j = first_triangle_idx; j < render_data->polygon_triangles.len;
+           j++) {
+        render_data->polygon_triangles.data[j].a += first_coordinate_idx;
+        render_data->polygon_triangles.data[j].b += first_coordinate_idx;
+        render_data->polygon_triangles.data[j].c += first_coordinate_idx;
+        assert(render_data->polygon_triangles.data[j].a >
+                   first_coordinate_idx &&
+               render_data->polygon_triangles.data[j].a <
+                   render_data->polygon_coords.len);
+        assert(render_data->polygon_triangles.data[j].b >
+                   first_coordinate_idx &&
+               render_data->polygon_triangles.data[j].b <
+                   render_data->polygon_coords.len);
+        assert(render_data->polygon_triangles.data[j].c >
+                   first_coordinate_idx &&
+               render_data->polygon_triangles.data[j].c <
+                   render_data->polygon_coords.len);
+      }
+      for (S32 i = 0; i < render_data->polygon_triangles.len; i += 1) {
+        Triangle t = render_data->polygon_triangles.data[i];
+        ASSERT(CROSS(render_data->polygon_coords.data[t.a],
+                     render_data->polygon_coords.data[t.b],
+                     render_data->polygon_coords.data[t.c]) > 0,
+               "Triangle [%d, %d, %d] not counter-clockwise", t.a, t.b, t.c)
       }
     }
 
@@ -750,13 +763,13 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
       while (polygon != NULL) {
         S32 contour_count = polygon->children.length;
         S32Array contour_sizes = S32ArrayNew(scratch.arena, contour_count);
-        Coord2 *vertices = &parsed->multi_polygon_coords
-                                .data[parsed->multi_polygon_coords.len];
-        S32 first_coordinate_idx = parsed->multi_polygon_coords.len;
-        S32 first_triangle_idx = parsed->multi_polygon_triangles.len;
+        Coord2 *vertices = &render_data->multi_polygon_coords
+                                .data[render_data->multi_polygon_coords.len];
+        S32 first_coordinate_idx = render_data->multi_polygon_coords.len;
+        S32 first_triangle_idx = render_data->multi_polygon_triangles.len;
 
         // create emtpy slot at vertices[0] for triangulation
-        Coord2ArrayPush(&parsed->multi_polygon_coords, (Coord2){0.f, 0.f});
+        Coord2ArrayPush(&render_data->multi_polygon_coords, (Coord2){0.f, 0.f});
 
         JsonNode *contour_array = polygon->children.first;
         while (contour_array != NULL) {
@@ -764,40 +777,42 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                  "invalid size for polygon contour: %d",
                  contour_array->children.length)
           S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
-          ContourFromJsonArray(contour_array, &parsed->multi_polygon_coords);
+          ContourFromJsonArray(contour_array,
+                               &render_data->multi_polygon_coords);
           contour_array = contour_array->next;
         }
-        TessalatePolygon(&parsed->polygon_triangles,
-                         (Coord2Slice){.v = vertices,
-                                       .count = parsed->polygon_coords.len -
-                                                first_coordinate_idx},
-                         S32SliceFromArray(&contour_sizes));
+        TessalatePolygon(
+            &render_data->polygon_triangles,
+            (Coord2Slice){.v = vertices,
+                          .count = render_data->polygon_coords.len -
+                                   first_coordinate_idx},
+            S32SliceFromArray(&contour_sizes));
 
         // we need to fix the indices as they are local to a polygon, but they
         // now point into the global coordinate array.
         for (S32 j = first_triangle_idx;
-             j < parsed->multi_polygon_triangles.len; j++) {
-          Triangle *triangle = &parsed->multi_polygon_triangles.data[j];
+             j < render_data->multi_polygon_triangles.len; j++) {
+          Triangle *triangle = &render_data->multi_polygon_triangles.data[j];
           triangle->a += first_coordinate_idx;
           triangle->b += first_coordinate_idx;
           triangle->c += first_coordinate_idx;
           ASSERT(triangle->a > first_coordinate_idx &&
-                     triangle->a < parsed->multi_polygon_coords.len,
+                     triangle->a < render_data->multi_polygon_coords.len,
                  "multi polygon index out of range, should be inside (%d-%d), "
                  "was: %d",
-                 first_coordinate_idx, parsed->multi_polygon_coords.len,
+                 first_coordinate_idx, render_data->multi_polygon_coords.len,
                  triangle->a);
           ASSERT(triangle->b > first_coordinate_idx &&
-                     triangle->b < parsed->multi_polygon_coords.len,
+                     triangle->b < render_data->multi_polygon_coords.len,
                  "multi polygon index out of range, should be inside (%d-%d), "
                  "was: %d",
-                 first_coordinate_idx, parsed->multi_polygon_coords.len,
+                 first_coordinate_idx, render_data->multi_polygon_coords.len,
                  triangle->b);
           ASSERT(triangle->c > first_coordinate_idx &&
-                     triangle->c < parsed->multi_polygon_coords.len,
+                     triangle->c < render_data->multi_polygon_coords.len,
                  "multi polygon index out of range, should be inside (%d-%d), "
                  "was: %d",
-                 first_coordinate_idx, parsed->multi_polygon_coords.len,
+                 first_coordinate_idx, render_data->multi_polygon_coords.len,
                  triangle->c);
         }
         polygon = polygon->next;
@@ -808,7 +823,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
   }
 
   temp_arena_memory_end(scratch);
-  return parsed;
+  return render_data;
 }
 
 GeoJson *geo_json_parse(Arena *arena, char *filepath) {
@@ -901,7 +916,7 @@ void draw_polygons(const GeoJson *coords, Camera2D camera) {
         GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.b]), camera);
     Vector2 c =
         GetWorldToScreen2D(Vector2FromCoord2(p_coords.data[t.c]), camera);
-    if (CROSS(a, b, c) <= 0) {
+    if (CROSS(a, b, c) >= 0.f) {
       fprintf(stderr, "ERROR: Triangle %d -> %d -> %d, not counter clockwise\n",
               t.a, t.b, t.c);
     }
