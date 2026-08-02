@@ -63,6 +63,7 @@ void *arena_alloc_align(Arena *a, size_t size, size_t align) {
     return ptr;
   }
   // Return NULL if the arena is out of memory (or handle differently)
+  assert(0 && "Backing memory is exhausted");
   return NULL;
 }
 

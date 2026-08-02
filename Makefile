@@ -1,7 +1,7 @@
 GEO_FILE=./samples/poly_test_2.json
 EXE_NAME= map-renderer
 EXE_NAME_UNOPTIMIZED= unoptimized-map-renderer
-CFLAGS= -Wextra -Wall -Wundef -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-default -Wswitch-enum -Wconversion 
+CFLAGS= -Wextra -Wall -Wundef -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-default -Wswitch-enum -Wconversion -DRAYMATH_USE_SIMD_INTRINSICS
 
 LDFLAGS= -lraylib -lm
 
@@ -17,7 +17,7 @@ windows: geojson-parser.c triangulate.h arena.c base.h
 map-renderer: geojson-parser.c triangulate.h arena.c base.h
 	gcc $(CFLAGS) $(executable) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME) -O2
 
-unoptimized: geojson-parser.c triangulate.h arena.c base.h tessalate.h
+unoptimized: geojson-parser.c arena.c base.h tessalate.h fixed-array.c
 	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME_UNOPTIMIZED)
 
 debug: unoptimized
