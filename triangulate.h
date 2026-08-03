@@ -62,7 +62,7 @@ typedef struct {
   int nextfree;
 } VertexChain;
 
-#define MAX_SEGMENTS 5000 /* max# of segments. Determines how */
+#define MAX_SEGMENTS 21024 /* max# of segments. Determines how */
                           /* many points can be specified as */
                           /* input. If your datasets have large */
                           /* number of points, increase this */
