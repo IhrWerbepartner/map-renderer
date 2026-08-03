@@ -662,7 +662,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                     contour_array->children.length)
         }
         contour_sizes[i] = contour_array->children.length - 1;
-        contour_from_json_array_reverse(contour_array, &parsed->polygon_coords);
+        contour_from_json_array(contour_array, &parsed->polygon_coords);
         contour_array = contour_array->next;
         i++;
       }
@@ -996,7 +996,7 @@ int main(int argc, char **argv) {
         // Zoom increment
         // Uses log scaling to provide consistent zoom speed
         float scale = 0.2f * wheel;
-        camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 100000.0f);
+        camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 10000000.0f);
       }
     } else {
       // Zoom based on mouse right click
