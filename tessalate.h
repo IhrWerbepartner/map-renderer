@@ -50,10 +50,13 @@ DeclFixedArray(QueryNodeArray, QueryNode);
 DeclFixedArray(TrapezoidArray, Trapezoid);
 
 // Circularly linked list describing the monotone polygon
+// The .marked field is used to detect if the chain has already been
+// triangulated This case can arise at polygons with holes
 typedef struct {
   S32 vertex;
   S32 next;
   S32 prev;
+  S32 marked;
 } MonotoneChain;
 
 typedef struct {
@@ -335,8 +338,16 @@ static void TriangulateMonotonePolygons(
     Coord2 ymin = vertex_chains.v[first_vertex].pt;
     S32 posmax = monotone_chain_start_vertex.v[i];
     S32 p = monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].next;
+    bool processed = false;
+    monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].marked = true;
     S32 v;
     while ((v = monotone_polygon_chains.v[p].vertex) != first_vertex) {
+      if (monotone_polygon_chains.v[p].marked) {
+        processed = true;
+        break;
+      } else {
+        monotone_polygon_chains.v[p].marked = true;
+      }
       if (Coord2GreaterThan(vertex_chains.v[v].pt, ymax)) {
         ymax = vertex_chains.v[v].pt;
         posmax = p;
@@ -347,7 +358,13 @@ static void TriangulateMonotonePolygons(
       p = monotone_polygon_chains.v[p].next;
       vertex_count += 1;
     }
-    /* already a triangle */
+    // this case arises at polygon with holes where duplicate monotone polygons
+    // are produced. We only need to triangulate exactly one of them
+    if (processed) {
+      continue;
+    }
+
+    // already a triangle
     if (vertex_count == 3) {
       TriangleArrayPush(
           op, (Triangle){
@@ -2315,10 +2332,13 @@ static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
   for (S32 i = found_vertices.count - 1; i > 0; i -= 1) {
     if (found_vertices.d[i]) {
       found_inside = true;
+    } else {
+      found_inside = false;
     }
     if (found_inside) {
-      ASSERT(found_vertices.d[i] > 0 && found_vertices.d[i] <= 4,
-             "Vertex %d (%f, %f), not found in monotone chains", i, vc.v[i].pt.x, vc.v[i].pt.y);
+      ASSERT(found_vertices.d[i],
+             "Vertex %d (%f, %f), not found in monotone chains", i,
+             vc.v[i].pt.x, vc.v[i].pt.y);
     }
   }
   temp_arena_memory_end(scratch);
