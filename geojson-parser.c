@@ -976,7 +976,7 @@ int main(int argc, char **argv) {
     usage(argv[0]);
     exit(EXIT_FAILURE);
   }
-  const U64 backing_buffer_size = 1024 * 1024 * 1024;
+  const U64 backing_buffer_size = GB(2);
 #ifdef _WIN32
   void *backing_buffer = VirtualAlloc(NULL, backing_buffer_size,
                                       MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -1068,7 +1068,7 @@ int main(int argc, char **argv) {
       // Zoom increment
       // Uses log scaling to provide consistent zoom speed
       F32 scale = 0.2f * wheel;
-      camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 100000.0f);
+      camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 1000000.0f);
     }
 
     // Camera reset (zoom and rotation)

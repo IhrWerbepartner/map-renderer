@@ -195,9 +195,8 @@ void TessalatePolygon(TriangleArray *triangles, const Coord2Slice coords,
   QueryNodeArray query_structure =
       QueryNodeArrayNew(scratch.arena, 12 * coords.count);
   SegmentArray segments = SegmentArrayNew(scratch.arena, coords.count);
-  TrapezoidArray trapezoids = TrapezoidArrayNew(
-      scratch.arena,
-      6 * coords.count); // TODO: figure out why 4 * coords.count is not enough
+  TrapezoidArray trapezoids =
+      TrapezoidArrayNew(scratch.arena, 6 * coords.count);
   S32Array permutated_segments = S32ArrayNew(scratch.arena, coords.count);
   MonotoneChainArray monotone_polygon_chains =
       MonotoneChainArrayNew(scratch.arena, 4 * coords.count);
@@ -405,7 +404,7 @@ static void TriangulateSingleMonotonePolygon(VertexChainSlice vertex_chains,
 
   S32 v;
   Temp_Arena_Memory scratch = GetScratch();
-  S32Array reflex_chain = S32ArrayNew(scratch.arena, triangles->capacity);
+  S32Array reflex_chain = S32ArrayNew(scratch.arena, vertex_chains.count);
   S32 endv, vpos;
   // RHS segment is a single segment
   if (side == BASE_RIGHT) {
@@ -2196,9 +2195,13 @@ static void ValidateSegmentStructure(SegmentSlice segments) {
   ASSERT(!segments.v[0].prev, "Segments[0] not zeroed")
   ASSERT(!segments.v[0].v0, "Segments[0] not zeroed")
   ASSERT(!segments.v[0].v1, "Segments[0] not zeroed")
-  // TODO: detect possible duplicates? i.e Segment used in multiple cycles
+  Temp_Arena_Memory scratch = GetScratch();
+  S32Array found_segments = S32ArrayNew(scratch.arena, segments.count);
+  found_segments.count = segments.count;
   for (S32 i = 1; i < segments.count; i += 1) {
     Segment s = segments.v[i];
+    found_segments.d[s.v0] += 1;
+    found_segments.d[s.v1] += 1;
     ASSERT(s.next, "Segment %d should have next neighbor", i)
     ASSERT(s.prev, "Segment %d should have prev neighbor", i)
     ASSERT(s.v0, "Segment %d should have valid v0", i)
@@ -2208,6 +2211,10 @@ static void ValidateSegmentStructure(SegmentSlice segments) {
       ASSERT(s.root1, "Segment %d should have valid root1", i)
     }
   }
+  for (S32 i = 1; i < found_segments.count; i += 1) {
+    ASSERT(found_segments.d[i] == 2, "Segment %d not found or duplicated", i);
+  }
+  temp_arena_memory_end(scratch);
 }
 
 static void ValidateQueryTrapezoidSegmentStructures(
@@ -2287,7 +2294,8 @@ static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
   for (S32 i = 1; i < vc.count; i += 1) {
     for (S32 j = 0; j < vc.v[i].next_free; j += 1) {
       ASSERT(mc.v[vc.v[i].vertex_index_in_monotone_chain[j]].vertex == i,
-             "vc -> mc and mc -> vc indices do not match")
+             "vc -> mc and mc -> vc indices do not match");
+      ASSERT(vc.v[i].next_free < 5, "next_free array overflow")
     }
   }
   Temp_Arena_Memory scratch = GetScratch();
@@ -2295,10 +2303,10 @@ static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
   found_vertices.count = vc.count;
   for (S32 i = 0; i < start_vertices.count; i += 1) {
     S32 start_vertex = mc.v[start_vertices.v[i]].vertex;
-    found_vertices.d[mc.v[start_vertex].vertex] = true;
+    found_vertices.d[mc.v[start_vertex].vertex] += 1;
     S32 current_vertex = mc.v[start_vertices.v[i]].next;
     while (mc.v[current_vertex].vertex != start_vertex) {
-      found_vertices.d[mc.v[current_vertex].vertex] = true;
+      found_vertices.d[mc.v[current_vertex].vertex] += 1;
       current_vertex = mc.v[current_vertex].next;
     }
   }
@@ -2309,8 +2317,8 @@ static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
       found_inside = true;
     }
     if (found_inside) {
-      // ASSERT(found_vertices.d[i], "Vertex %d not found in monotone chains",
-      // i);
+      ASSERT(found_vertices.d[i] > 0 && found_vertices.d[i] <= 4,
+             "Vertex %d (%f, %f), not found in monotone chains", i, vc.v[i].pt.x, vc.v[i].pt.y);
     }
   }
   temp_arena_memory_end(scratch);

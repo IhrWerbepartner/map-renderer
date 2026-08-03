@@ -18,8 +18,6 @@
     }                                                                          \
   } while (0);
 
-#define Min(A, B) (((A) < (B)) ? (A) : (B))
-#define Max(A, B) (((A) > (B)) ? (A) : (B))
 #define CROSS(v0, v1, v2)                                                      \
   (((v1).x - (v0).x) * ((v2).y - (v0).y) -                                     \
    ((v1).y - (v0).y) * ((v2).x - (v0).x))
@@ -40,6 +38,20 @@ typedef S32 B32;
 typedef S64 B64;
 typedef float F32;
 typedef double F64;
+
+#define KB(n) (((U64)(n)) << 10)
+#define MB(n) (((U64)(n)) << 20)
+#define GB(n) (((U64)(n)) << 30)
+#define TB(n) (((U64)(n)) << 40)
+#define Thousand(n) ((n) * 1000)
+#define Million(n) ((n) * 1000000)
+#define Billion(n) ((n) * 1000000000)
+
+#define Min(A, B) (((A) < (B)) ? (A) : (B))
+#define Max(A, B) (((A) > (B)) ? (A) : (B))
+#define ClampTop(A, X) Min(A, X)
+#define ClampBot(X, B) Max(X, B)
+//#define Clamp(A, X, B) (((X) < (A)) ? (A) : ((X) > (B)) ? (B) : (X))
 
 typedef struct coord2 {
   F64 x, y;
