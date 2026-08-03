@@ -1,5 +1,6 @@
 perf.data
 perf.data.old
+debug.log
 
 map-renderer
 unoptimized-map-renderer
