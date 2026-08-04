@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base.h"
+#include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,7 +63,7 @@ typedef struct {
   int nextfree;
 } VertexChain;
 
-#define MAX_SEGMENTS 21024 /* max# of segments. Determines how */
+#define MAX_SEGMENTS 22050 /* max# of segments. Determines how */
                           /* many points can be specified as */
                           /* input. If your datasets have large */
                           /* number of points, increase this */
@@ -409,6 +410,9 @@ static int traverse_polygon(int mcur, int trnum, int from, int dir) {
   if ((trnum <= 0) || visited[trnum])
     return 0;
 
+#ifdef DEBUG
+  fprintf(stderr, "traversal %d -> %d\n", from, trnum);
+#endif
   visited[trnum] = TRUE;
 
   /* We have much more information available here. */
@@ -1352,6 +1356,7 @@ static int add_segment(int segnum) {
 
     else if ((trapezoids[t].d0 <= 0) &&
              (trapezoids[t].d1 > 0)) { /* Only one trapezoid below */
+      assert(false);
       if ((trapezoids[t].u0 > 0) &&
           (trapezoids[t].u1 > 0)) {  /* continuation of a chain from abv. */
         if (trapezoids[t].usave > 0) /* three upper neighbours */
@@ -1615,22 +1620,24 @@ static int permute[MAX_SEGMENTS];
 
 /* Generate a random permutation of the segments 1..n */
 static int generate_random_ordering(int n) {
-  int i;
-  int m, st[MAX_SEGMENTS], *p;
-
-  choose_idx = 1;
-  srand(time(NULL));
-
-  for (i = 0; i <= n; i++)
-    st[i] = i;
-
-  p = st;
-  for (i = 1; i <= n; i++, p++) {
-    m = rand() % (n + 1 - i) + 1;
-    permute[i] = p[m];
-    if (m != 1)
-      p[m] = p[1];
+  srand(3); // TODO: figure out where to seed prng
+  for (int i = 0; i <= n; i++) {
+    permute[i] = i;
   }
+  for (int i = n; i > 1; i--) {
+    const int j = (rand() % i) + 1;
+    const int tmp = permute[j];
+    permute[j] = permute[i];
+    permute[i] = tmp;
+  }
+  choose_idx = n;
+#ifdef DEBUG
+  int sum = 0;
+  for (S32 i = 1; i <= n; i++) {
+    sum += permute[i];
+  }
+  assert(sum == (n * (n + 1)) / 2);
+#endif
   return 0;
 }
 
@@ -1641,7 +1648,7 @@ static int choose_segment(void) {
 #ifdef DEBUG
   fprintf(stderr, "choose_segment: %d\n", permute[choose_idx]);
 #endif
-  return permute[choose_idx++];
+  return permute[choose_idx--];
 }
 
 /* Get log*n for given n */

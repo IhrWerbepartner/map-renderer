@@ -503,7 +503,7 @@ void contour_from_json_array(JsonNode *coordinates, Coord2Array *result_array) {
 }
 
 // iterate backwards over the coordinates omitting the first one as it is
-// identical to the last input: [a, b, c, d, e] returns [e, d, c, b]
+// identical to the last input: [a, b, c, d, e] returns [d, c, b, a]
 void contour_from_json_array_reverse(JsonNode *coordinates, Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
@@ -514,8 +514,8 @@ void contour_from_json_array_reverse(JsonNode *coordinates, Coord2Array *result_
   }
   JsonNode *point_coords = coordinates->children.last;
   while (point_coords != NULL && point_coords != coordinates->children.first) {
-    Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
     point_coords = point_coords->prev;
+    Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
   }
 }
 
@@ -662,7 +662,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                     contour_array->children.length)
         }
         contour_sizes[i] = contour_array->children.length - 1;
-        contour_from_json_array(contour_array, &parsed->polygon_coords);
+        contour_from_json_array_reverse(contour_array, &parsed->polygon_coords);
         contour_array = contour_array->next;
         i++;
       }
