@@ -203,7 +203,7 @@ void TessalatePolygon(TriangleArray *triangles, const Coord2Slice coords,
   S32Array permutated_segments = S32ArrayNew(scratch.arena, coords.count);
   MonotoneChainArray monotone_polygon_chains =
       MonotoneChainArrayNew(scratch.arena, 4 * coords.count);
-  S32Array visited_trapezoids = S32ArrayNew(scratch.arena, 4 * coords.count);
+  S32Array visited_trapezoids = S32ArrayNew(scratch.arena, 6 * coords.count);
   visited_trapezoids.count = visited_trapezoids.capacity;
   VertexChainArray vertex_chains =
       VertexChainArrayNew(scratch.arena, coords.count);
@@ -304,10 +304,10 @@ static void TriangulateMonotonePolygons(
     }
     EndDrawing();
 #endif
-    fprintf(stderr, "%d ",
+    fprintf(stderr, "(%d: %d) ", monotone_chain_start_vertex.v[i],
             monotone_polygon_chains.v[monotone_chain_start_vertex.v[i]].vertex);
     while (monotone_polygon_chains.v[p].vertex != first_vertex) {
-      fprintf(stderr, "%d ", monotone_polygon_chains.v[p].vertex);
+      fprintf(stderr, "(%d: %d) ", p, monotone_polygon_chains.v[p].vertex);
 #ifdef DEBUG_GRAPHICAL
       Vector2 a = GetWorldToScreen2D(
           Vector2FromCoord2(
@@ -443,6 +443,7 @@ static void TriangulateSingleMonotonePolygon(VertexChainSlice vertex_chains,
     v = monotone_chains.v[vpos].vertex;
     endv = monotone_chains.v[y_max_index].vertex;
   }
+  ASSERT(endv != 0, "end vertex not valid\n");
 
   while (v != endv || reflex_chain.count > 2) {
     if (reflex_chain.count > 1 &&
@@ -560,6 +561,9 @@ static void TraversePolygon(TraversalInfo *TI, S32 current_monotone,
     ERROR_MSG("Left segment = right segment")
   }
   TI->visited_trapezoids.v[current_trapezoid] = true;
+#ifdef DEBUG
+  fprintf(stderr, "visited: %d\n", current_trapezoid);
+#endif
 
   /* We have much more information available here.
    * rseg: goes upwards
@@ -943,6 +947,18 @@ static void NextVertexIndexForMonotoneChain(VertexChainSlice vertex_chains,
   *iq = tq;
 }
 
+static S32 PolygonLength(MonotoneChainSlice monotone_chains, S32 start) {
+  ASSERT(start >= 0 && start < monotone_chains.count, "invalid index");
+  S32 current = monotone_chains.v[start].next;
+  S32 length = 1;
+  while (start != current) {
+    current = monotone_chains.v[current].next;
+    length += 1;
+  }
+  ASSERT(length > 2, "invalid polygon length");
+  return length;
+}
+
 /* v0 and v1 are specified in anti-clockwise order with respect to
  * the current monotone polygon mcur. Split the current polygon into
  * two polygons using the diagonal (v0, v1)
@@ -967,6 +983,11 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
 
   const int p = vp0->vertex_index_in_monotone_chain[ip];
   const int q = vp1->vertex_index_in_monotone_chain[iq];
+
+#ifdef DEBUG
+  S32 polygon_length_prev =
+      PolygonLength(MonotoneChainSliceFromArray(monotone_polygon_chains), p);
+#endif
 
   /* At this stage, we have got the positions of v0 and v1 in the */
   /* desired chain. Now modify the linked lists */
@@ -1030,6 +1051,18 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
   ValidateMonotoneAndVertexChains(
       vertex_chains, MonotoneChainSliceFromArray(monotone_polygon_chains),
       S32SliceFromArray(monotone_chain_start_vertex));
+
+    S32 polygon_length_p =
+        PolygonLength(MonotoneChainSliceFromArray(monotone_polygon_chains), p);
+    S32 polygon_length_i =
+        PolygonLength(MonotoneChainSliceFromArray(monotone_polygon_chains), i);
+  if (polygon_length_p != polygon_length_i) {
+    ASSERT(polygon_length_p + polygon_length_i == polygon_length_prev + 2,
+           "Polygon length of %d and %d do not match previous length %d + %d "
+           "!= %d",
+           current_monotone_polygon, new_monotone, polygon_length_p,
+           polygon_length_i, polygon_length_prev + 2)
+  }
 #endif
   return new_monotone;
 }
@@ -1103,15 +1136,15 @@ static void ConstructTrapezoidation(QueryNodeArray *query_structure,
       Segment *s = &segments->d[i];
 
       if (!s->is_inserted) {
-        S32 endpoint = TrapezoidIndexFromVertex(
+        s->root0 = TrapezoidIndexFromVertex(
             QueryNodeSliceFromArray(query_structure),
             SegmentSliceFromArray(segments), vertices, s->v0, s->v1, s->root0);
-        s->root0 = trapezoids->d[endpoint].sink_node;
+        s->root0 = trapezoids->d[s->root0].sink_node;
 
-        endpoint = TrapezoidIndexFromVertex(
+        s->root1 = TrapezoidIndexFromVertex(
             QueryNodeSliceFromArray(query_structure),
             SegmentSliceFromArray(segments), vertices, s->v1, s->v0, s->root1);
-        s->root1 = trapezoids->d[endpoint].sink_node;
+        s->root1 = trapezoids->d[s->root1].sink_node;
       }
     }
   }
@@ -1404,11 +1437,7 @@ static void AddSegment(QueryNodeArray *query_structure, Coord2Slice vertices,
     // only one trapezoid below. partition t into two and make the two resulting
     // trapezoids t and tn as the upper neighbors of the sole lower trapezoid
     if (trapezoids->d[t].down1 && !trapezoids->d[t].down0) {
-      // merge the case where we have the sole neighbor in down1
-      trapezoids->d[t].down0 = trapezoids->d[t].down1;
-      trapezoids->d[t].down1 = 0;
-      trapezoids->d[new_trapezoid].down0 = trapezoids->d[new_trapezoid].down1;
-      trapezoids->d[new_trapezoid].down1 = 0;
+      ERROR_MSG("Trapezoid has neighbor in wrong field");
     }
     if (trapezoids->d[t].down0 && !trapezoids->d[t].down1) {
       // continuation of a chain from above
@@ -1933,7 +1962,7 @@ static S32 InitQueryStructure(QueryNodeArray *query_structure,
 // generates a random permutation from 1..=n inside the permutation array
 // keeps permutation[0] = 0.
 static void GeneratePermutation(S32Array *permutation) {
-  // srand(2); //TODO: figure out where to seed prng
+  srand(3); // TODO: figure out where to seed prng
   const S32 n = permutation->capacity;
   for (S32 i = 0; i < n; i++) {
     S32ArrayPush(permutation, i);
@@ -1961,6 +1990,7 @@ static S32 RandomSegment(S32Array *permutation) {
     fprintf(stderr, "choose segment: %d, %d left\n", segment_index,
             permutation->count);
 #endif
+    ASSERT(segment_index, "Segment index invalid");
     return segment_index;
   }
   ASSERT(false, "RandomSegment has no more segment to return");
@@ -2308,6 +2338,7 @@ static void ValidateMonotoneAndVertexChains(const VertexChainSlice vc,
                                             const MonotoneChainSlice mc,
                                             const S32Slice start_vertices) {
   ValidateMonotoneChains(mc);
+  ASSERT(mc.count <= vc.count * 3, "Monotone polygons too large");
   for (S32 i = 1; i < vc.count; i += 1) {
     for (S32 j = 0; j < vc.v[i].next_free; j += 1) {
       ASSERT(mc.v[vc.v[i].vertex_index_in_monotone_chain[j]].vertex == i,
