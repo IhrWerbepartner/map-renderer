@@ -45,7 +45,7 @@ def process_json_file(file_path, target_length):
 # --- Example Usage ---
 if __name__ == "__main__":
     # Specify your JSON file path and the target array length (n) here
-    file_name = "./samples/poly_europa_countries.json"
-    n = 135
+    file_name = "./samples/streets.json"
+    n = 3
     
     process_json_file(file_name, n)

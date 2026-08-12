@@ -1,8 +1,12 @@
 #pragma once
 #include "fixed-array.c"
+#include <float.h>
 #include <raylib.h>
 
 #include <stdint.h>
+
+#define internal static
+#define global static
 
 #define DEBUG_MSG(...) fprintf(stderr, __VA_ARGS__);
 
@@ -39,6 +43,24 @@ typedef S64 B64;
 typedef float F32;
 typedef double F64;
 
+global U64 max_U64 = 0xffffffffffffffffull;
+global U32 max_U32 = 0xffffffff;
+global U16 max_U16 = 0xffff;
+global U8 max_U8 = 0xff;
+
+global S64 max_S64 = (S64)0x7fffffffffffffffll;
+global S32 max_S32 = (S32)0x7fffffff;
+global S16 max_S16 = (S16)0x7fff;
+global S8 max_S8 = (S8)0x7f;
+
+global S64 min_S64 = (S64)0x8000000000000000ll;
+global S32 min_S32 = (S32)0x80000000;
+global S16 min_S16 = (S16)0x8000;
+global S8 min_S8 = (S8)0x80;
+
+global F64 max_F64 = (F64)DBL_MAX;
+global F64 min_F64 = -(F64)DBL_MAX;
+
 #define KB(n) (((U64)(n)) << 10)
 #define MB(n) (((U64)(n)) << 20)
 #define GB(n) (((U64)(n)) << 30)
@@ -51,7 +73,7 @@ typedef double F64;
 #define Max(A, B) (((A) > (B)) ? (A) : (B))
 #define ClampTop(A, X) Min(A, X)
 #define ClampBot(X, B) Max(X, B)
-//#define Clamp(A, X, B) (((X) < (A)) ? (A) : ((X) > (B)) ? (B) : (X))
+// #define Clamp(A, X, B) (((X) < (A)) ? (A) : ((X) > (B)) ? (B) : (X))
 
 typedef struct coord2 {
   F64 x, y;
@@ -60,20 +82,30 @@ typedef struct coord2 {
 #define Vector2FromCoord2(coord)                                               \
   (Vector2) { .x = (F32)(coord).x, .y = -(F32)(coord).y }
 
-typedef struct triangle {
+typedef struct Triangle Triangle;
+struct Triangle {
   S32 a, b, c;
-} Triangle;
+};
 
-typedef struct slice {
+typedef struct Slice Slice;
+struct Slice {
   S32 start;
   S32 length;
-} Slice; // index into the point2DArray
+};
+
+// a range has a base and a count. Is a view into an array.
+typedef struct Range Range;
+struct Range {
+  S32 min;
+  S32 count;
+};
 
 DeclFixedArray(Coord2Array, Coord2);
 DeclFixedArray(Vector2Array, Vector2);
 DeclFixedArray(TriangleArray, Triangle);
 DeclFixedArray(U32Array, U32);
 DeclFixedArray(S32Array, S32);
+DeclFixedArray(RangeArray, Range);
 
 static Arena arena1 = {0};
 static Arena arena2 = {0};

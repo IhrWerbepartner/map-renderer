@@ -37,7 +37,7 @@ typedef struct line_string {
 DeclFixedArray(LineStringArray, LineString);
 
 typedef struct multi_line_string {
-  Slice coordinates;
+  Slice lines;
 } MultiLineString;
 
 typedef struct contour {
@@ -100,17 +100,17 @@ struct RenderOptions {
 static RenderOptions render_options = {0};
 
 void init_all_arrays(Arena *arena, GeoJson *base, S32 capacity) {
-  base->interest_points = PointArrayNew(arena, 1000);
+  base->interest_points = PointArrayNew(arena, 100000);
 
-  base->multi_point_coords = Coord2ArrayNew(arena, 1000);
-  base->multi_points = MultiPointArrayNew(arena, 1000);
+  base->multi_point_coords = Coord2ArrayNew(arena, 100000);
+  base->multi_points = MultiPointArrayNew(arena, 10000);
 
-  base->line_string_coords = Coord2ArrayNew(arena, 1000);
-  base->line_strings = LineStringArrayNew(arena, 1000);
+  base->line_string_coords = Coord2ArrayNew(arena, 10000000);
+  base->line_strings = LineStringArrayNew(arena, 1000000);
 
-  base->multi_line_string_coords = Coord2ArrayNew(arena, 1000);
-  base->multi_line_string_array = LineStringArrayNew(arena, 1000);
-  base->multi_line_strings = MultiLineStringArrayNew(arena, 1000);
+  base->multi_line_string_coords = Coord2ArrayNew(arena, 10000000);
+  base->multi_line_string_array = LineStringArrayNew(arena, 100000);
+  base->multi_line_strings = MultiLineStringArrayNew(arena, 100000);
 
   base->polygon_coords = Coord2ArrayNew(arena, capacity);
   base->polygon_triangles = TriangleArrayNew(arena, capacity);
@@ -143,7 +143,7 @@ typedef struct JsonNode {
       F64 dbl_value; // the value of DOUBLE node
     } num;
     struct { // children of OBJECT or ARRAY
-      S32 length;
+      S32 count;
       struct JsonNode *first;
       struct JsonNode *last;
     } children;
@@ -170,7 +170,7 @@ static JsonNode *create_json(Arena *arena, JsonType type, String8 key,
     parent->children.last->next = js;
     parent->children.last = js;
   }
-  parent->children.length++;
+  parent->children.count++;
   return js;
 }
 
@@ -471,8 +471,12 @@ JsonNode *find_key_in_children(const JsonNode *node, String8 key) {
 }
 
 Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
-  if (coordinates->type != JSON_ARRAY || coordinates->children.length != 2) {
-    ERROR_MSG("invalid coordinates for Point supplied")
+  if (coordinates->type != JSON_ARRAY) {
+    ERROR_MSG("invalid coordinate type for Point supplied")
+  }
+  if (coordinates->children.count != 2) {
+    ERROR_MSG("Map rendrer only suppords 2D coords: was %d\n",
+              coordinates->children.count)
   }
   const JsonNode *x_coordinate = coordinates->children.first;
   const JsonNode *y_coordinate = coordinates->children.last;
@@ -494,9 +498,9 @@ S32 ContourFromJsonArray(const JsonNode *coordinates,
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
-  if (coordinates->children.length <= 2) {
+  if (coordinates->children.count <= 2) {
     ERROR_MSG("invalid contour with: %d coordinates\n",
-              coordinates->children.length)
+              coordinates->children.count)
   }
   S32 min_index = 0;
   Coord2 min_coordinate =
@@ -515,9 +519,9 @@ S32 ContourFromJsonArray(const JsonNode *coordinates,
     index += 1;
     point_coords = point_coords->next;
   }
-  ASSERT(min_index >= 0 && min_index < coordinates->children.length,
+  ASSERT(min_index >= 0 && min_index < coordinates->children.count,
          "Min index %d out of range (%d..%d)", min_index, 0,
-         coordinates->children.length)
+         coordinates->children.count)
   return min_index;
 }
 
@@ -549,9 +553,9 @@ void ContourFromJsonArrayReversed(const JsonNode *coordinates,
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
-  if (coordinates->children.length <= 2) {
+  if (coordinates->children.count <= 2) {
     ERROR_MSG("invalid contour with: %d coordinates\n",
-              coordinates->children.length)
+              coordinates->children.count)
   }
   const JsonNode *point_coords = coordinates->children.last;
   while (point_coords != NULL && point_coords != coordinates->children.first) {
@@ -575,7 +579,7 @@ void Coord2ArrayFromJsonArray(const JsonNode *coordinates,
 
 GeoJson *serialize(Arena *arena, JsonNode *root) {
   GeoJson *render_data = (GeoJson *)arena_alloc(arena, sizeof(GeoJson));
-  if (root->type != JSON_NULL || root->children.length != 1) {
+  if (root->type != JSON_NULL || root->children.count != 1) {
     ERROR_MSG("invalid json")
   }
   root = root->children.first;
@@ -636,7 +640,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                       String8FromCString("MultiPoint"))) {
       MultiPoint multi_point = (MultiPoint){
           .coordinates = (Slice){.start = render_data->multi_points.count,
-                                 .length = coordinates->children.length},
+                                 .length = coordinates->children.count},
       };
       Coord2ArrayFromJsonArray(coordinates, &render_data->multi_point_coords);
       // assert that we inserted the correct amount of points
@@ -649,7 +653,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                       String8FromCString("LineString"))) {
       LineString line_string = (LineString){
           .coordinates = (Slice){.start = render_data->line_string_coords.count,
-                                 .length = coordinates->children.length},
+                                 .length = coordinates->children.count},
       };
       Coord2ArrayFromJsonArray(coordinates, &render_data->line_string_coords);
       ASSERT(line_string.coordinates.start + line_string.coordinates.length ==
@@ -662,17 +666,16 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                       String8FromCString("MultiLineString"))) {
       JsonNode *line_string = coordinates->children.first;
       MultiLineString mls = (MultiLineString){
-          .coordinates =
-              (Slice){.start = render_data->multi_line_string_array.count,
-                      .length = coordinates->children.length},
+          .lines = (Slice){.start = render_data->multi_line_string_array.count,
+                           .length = coordinates->children.count},
       };
       while (line_string != NULL) {
         LineString ls = (LineString){
             .coordinates =
                 (Slice){.start = render_data->multi_line_string_coords.count,
-                        .length = coordinates->children.length},
+                        .length = line_string->children.count},
         };
-        Coord2ArrayFromJsonArray(coordinates,
+        Coord2ArrayFromJsonArray(line_string,
                                  &render_data->multi_line_string_coords);
         ASSERT(ls.coordinates.start + ls.coordinates.length ==
                    render_data->multi_line_string_coords.count,
@@ -685,7 +688,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
 
     if (String8Equals(geometry_type->text_value,
                       String8FromCString("Polygon"))) {
-      S32 contour_count = coordinates->children.length;
+      S32 contour_count = coordinates->children.count;
       S32Array contour_sizes = S32ArrayNew(scratch.arena, contour_count);
       Coord2 *vertices =
           &render_data->polygon_coords.d[render_data->polygon_coords.count];
@@ -696,21 +699,21 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
       Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
 
       JsonNode *contour_array = coordinates->children.first;
-      if (contour_array == NULL || contour_array->children.length <= 1) {
+      if (contour_array == NULL || contour_array->children.count <= 1) {
         ERROR_MSG("invalid size for polygon contour: %d",
-                  contour_array->children.length)
+                  contour_array->children.count)
       }
       const S32 min_coordinate_index =
           ContourFromJsonArray(contour_array, &render_data->polygon_coords);
-      S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
+      S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
       bool outerContourIsClockwise = MakeCoordinatesCounterClockwise(
           Coord2SliceFromArrayExt(&render_data->polygon_coords,
                                   first_coordinate_idx + 1,
-                                  contour_array->children.length - 1),
+                                  contour_array->children.count - 1),
           min_coordinate_index);
       contour_array = contour_array->next;
       while (contour_array != NULL) {
-        S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
+        S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
         if (outerContourIsClockwise) {
           ContourFromJsonArrayReversed(contour_array,
                                        &render_data->polygon_coords);
@@ -758,7 +761,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
              "expected array for MultiPolygon coordinates\n")
 
       while (polygon != NULL) {
-        S32 contour_count = polygon->children.length;
+        S32 contour_count = polygon->children.count;
         S32Array contour_sizes = S32ArrayNew(scratch.arena, contour_count);
         Coord2 *vertices = &render_data->multi_polygon_coords
                                 .d[render_data->multi_polygon_coords.count];
@@ -771,19 +774,19 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
         JsonNode *contour_array = polygon->children.first;
         const S32 min_coordinate_index = ContourFromJsonArray(
             contour_array, &render_data->multi_polygon_coords);
-        S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
+        S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
         bool outerContourIsClockwise = MakeCoordinatesCounterClockwise(
             Coord2SliceFromArrayExt(&render_data->multi_polygon_coords,
                                     first_coordinate_idx + 1,
-                                    contour_array->children.length - 1),
+                                    contour_array->children.count - 1),
             min_coordinate_index);
         DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
         contour_array = contour_array->next;
         while (contour_array != NULL) {
-          ASSERT(contour_array->children.length > 1,
+          ASSERT(contour_array->children.count > 1,
                  "invalid size for polygon contour: %d",
-                 contour_array->children.length)
-          S32ArrayPush(&contour_sizes, contour_array->children.length - 1);
+                 contour_array->children.count)
+          S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
           if (outerContourIsClockwise) {
             ContourFromJsonArrayReversed(contour_array,
                                          &render_data->multi_polygon_coords);
@@ -918,7 +921,7 @@ void draw_multi_line_strings(GeoJson *coords, Camera2D camera) {
 }
 
 void DrawPolygonTriangle(Triangle t, Vector2 a, Vector2 b, Vector2 c) {
-  if (CROSS(a, b, c) > 0.001f) {
+  if (CROSS(a, b, c) > 0.01f) {
     fprintf(stderr, "ERROR: Triangle %d -> %d -> %d, not counter clockwise\n",
             t.a, t.b, t.c);
   }
@@ -1013,24 +1016,24 @@ int main(int argc, char **argv) {
       .zoom = 4.0f,
       .target = {0, 0}};
 
-  {
-    LineStringArray lines = serialized_coords->line_strings;
-    Coord2Array l_coords = serialized_coords->line_string_coords;
-    for (S32 i = 0; i < lines.count; i++) {
-      const S32 start_index = lines.d[i].coordinates.start;
-      const S32 length = lines.d[i].coordinates.length;
-      for (S32 j = 0; j < length - 1; j++) {
-        DEBUG_MSG("line: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n",
-                  l_coords.d[start_index + j].x * ((F64)screenWidth / 180.0),
-                  (F32)(l_coords.d[start_index + j].y) *
-                      ((F64)screenHeight / 90.0),
-                  (F32)(l_coords.d[start_index + j + 1].x *
-                        ((F64)screenWidth / 180.0)),
-                  (F32)(l_coords.d[start_index + j + 1].y) *
-                      ((F64)screenHeight / 90.0))
-      }
-    }
-  }
+  //{
+  //  LineStringArray lines = serialized_coords->line_strings;
+  //  Coord2Array l_coords = serialized_coords->line_string_coords;
+  //  for (S32 i = 0; i < lines.count; i++) {
+  //    const S32 start_index = lines.d[i].coordinates.start;
+  //    const S32 length = lines.d[i].coordinates.length;
+  //    for (S32 j = 0; j < length - 1; j++) {
+  //      DEBUG_MSG("line: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n",
+  //                l_coords.d[start_index + j].x * ((F64)screenWidth / 180.0),
+  //                (F32)(l_coords.d[start_index + j].y) *
+  //                    ((F64)screenHeight / 90.0),
+  //                (F32)(l_coords.d[start_index + j + 1].x *
+  //                      ((F64)screenWidth / 180.0)),
+  //                (F32)(l_coords.d[start_index + j + 1].y) *
+  //                    ((F64)screenHeight / 90.0))
+  //    }
+  //  }
+  //}
   // Main game loop
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
@@ -1101,6 +1104,7 @@ int main(int argc, char **argv) {
     DrawText(TextFormat("CAMERA TARGET: [%03.04f, %03.04f]", camera.target.x,
                         camera.target.y),
              640, 40, 20, RED);
+    DrawFPS(640, 70);
 
     EndDrawing();
     //----------------------------------------------------------------------------------
