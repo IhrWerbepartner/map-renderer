@@ -93,6 +93,7 @@ typedef struct RenderOptions RenderOptions;
 struct RenderOptions {
   bool show_node_endpoints;
   bool show_triangulation;
+  bool show_vertex_numbers;
 };
 
 static RenderOptions render_options = {0};
@@ -813,7 +814,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                                     first_coordinate_idx + 1,
                                     contour_array->children.count - 1),
             min_coordinate_index);
-        DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
+        // DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
         contour_array = contour_array->next;
         while (contour_array != NULL) {
           ASSERT(contour_array->children.count > 1,
@@ -838,10 +839,9 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
             S32SliceFromArray(&contour_sizes));
 #else
         JsonNode *contour_array = polygon->children.first;
-        const S32 min_coordinate_index = ContourFromJsonArray(
-            contour_array, &render_data->multi_polygon_coords);
+        ContourFromJsonArray(contour_array, &render_data->multi_polygon_coords);
         S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
-        DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
+        // DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
         contour_array = contour_array->next;
         while (contour_array != NULL) {
           ASSERT(contour_array->children.count > 1,
@@ -976,16 +976,20 @@ void draw_multi_line_strings(GeoJson *coords, Camera2D camera) {
   (void)camera;
 }
 
-void DrawPolygonTriangle(Triangle t, Vector2 a, Vector2 b, Vector2 c) {
-  if (CROSS(a, b, c) > 0.01f) {
-    fprintf(stderr, "ERROR: Triangle %d -> %d -> %d, not counter clockwise\n",
-            t.a, t.b, t.c);
-  }
+static inline void DrawPolygonTriangle(Triangle t, Vector2 a, Vector2 b,
+                                       Vector2 c) {
+  // if (CROSS(a, b, c) > 0.01f) {
+  //   fprintf(stderr, "ERROR: Triangle %d -> %d -> %d, not counter
+  //   clockwise\n",
+  //           t.a, t.b, t.c);
+  // }
   DrawTriangle(a, b, c, (Color){0, 0, 255, 100});
   if (render_options.show_triangulation) {
     DrawLineEx(a, b, 3, RED);
     DrawLineEx(a, c, 3, RED);
     DrawLineEx(b, c, 3, RED);
+  }
+  if (render_options.show_vertex_numbers) {
     char buf[8] = {0};
     sprintf(buf, "%d", t.a);
     DrawText(buf, (int)a.x, (int)a.y, 50, RED);
@@ -1102,6 +1106,8 @@ int main(int argc, char **argv) {
       render_options.show_node_endpoints = true;
     if (IsKeyReleased(KEY_T))
       render_options.show_triangulation ^= true;
+    if (IsKeyReleased(KEY_N))
+      render_options.show_vertex_numbers ^= true;
 
     // Translate based on mouse right click
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
@@ -1161,6 +1167,14 @@ int main(int argc, char **argv) {
                         camera.target.y),
              640, 40, 20, RED);
     DrawFPS(640, 70);
+    Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
+    DrawText(TextFormat("MOUSE POS : [%03.04f, %03.04f]", mouseWorldPos.x,
+                        mouseWorldPos.y),
+             100, 10, 20, RED);
+    DrawText(TextFormat("Triangles (Poly):\t\t%d\nTriangles (M-Poly)\t\t%d",
+                        serialized_coords->polygon_triangles.count,
+                        serialized_coords->multi_polygon_triangles.count),
+             100, 40, 20, RED);
 
     EndDrawing();
     //----------------------------------------------------------------------------------

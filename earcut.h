@@ -140,7 +140,6 @@ internal S32 insertNode(NodeArray *nodes, S32 vertex, Coord2 pt, S32 last);
 #ifdef DEBUG
 static void ValidateNodeStructure(NodeSlice nodes);
 static void ValidateZOrderCurve(NodeSlice nodes);
-#endif
 
 static void PrintLinkedList(const NodeSlice nodes, const S32 start) {
   fprintf(stderr, "%d(%d) -> ", start, nodes.v[start].vertex);
@@ -151,6 +150,7 @@ static void PrintLinkedList(const NodeSlice nodes, const S32 start) {
   } while (n != start);
   fprintf(stderr, "%d(%d)\n", n, nodes.v[n].vertex);
 }
+#endif
 
 static bool isContourClockwise(const Coord2Slice coords) {
   Coord2 coord_min = (Coord2){.x = min_F64, .y = max_F64};
@@ -598,7 +598,9 @@ S32 eliminateHoles(const Polygon polygon, NodeArray *nodes, S32 outerNode) {
   // process holes from left to right; indexActive lets removeNode keep block
   // bboxes live as filterPoints heals edges during merges (see growBlock)
   for (S32 i = 0; i < hole_queue.count; i++) {
+#ifdef DEBUG
     PrintLinkedList(node_slice, outerNode);
+#endif
     outerNode = eliminateHole(&blocks, &block_head, &block_stop, nodes,
                               hole_queue.d[i], outerNode);
   }
@@ -1259,7 +1261,9 @@ void Earcut(TriangleArray *triangles, const Coord2Slice coords,
     return;
 
   outerNode = eliminateHoles(polygon, &nodes, outerNode);
+#ifdef DEBUG
   PrintLinkedList(NodeSliceFromArray(&nodes), outerNode);
+#endif
 
   // if the shape is not too simple, we'll use z-order curve hash later;
   // calculate polygon bbox
