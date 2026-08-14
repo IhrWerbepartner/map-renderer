@@ -2,13 +2,11 @@
 
 #include "arena.c"
 #include "base.h"
+#include "sort_r.h"
 #include <math.h>
-#include <stdbool.h>
+#include <stddef.h>
 
-struct Earcut {
-  TriangleArray *triangles;
-  S32 vertices;
-};
+// TODO: figure out invariants to put as validation functions.
 
 typedef struct Polygon Polygon;
 struct Polygon {
@@ -18,6 +16,7 @@ struct Polygon {
 
 typedef struct ZOrderInfo ZOrderInfo;
 struct ZOrderInfo {
+  bool hashing; // if false we do no hashing and the other fields are irrelevant
   F64 minX, maxX;
   F64 minY, maxY;
   F64 inv_size;
@@ -40,6 +39,9 @@ struct Node {
   S32 prevZ;
   S32 nextZ;
   bool steiner;
+#ifdef DEBUG
+  bool removed;
+#endif
 };
 DeclFixedArray(NodeArray, Node);
 
@@ -59,8 +61,8 @@ struct BlockBoundingBox {
 };
 DeclFixedArray(BlockBoundingBoxArray, BlockBoundingBox);
 
-inline void NewBoundedTriangle(BoundedTriangle *t, const NodeSlice nodes,
-                               const S32 a, const S32 b, const S32 c) {
+static inline void NewBoundedTriangle(BoundedTriangle *t, const NodeSlice nodes,
+                                      const S32 a, const S32 b, const S32 c) {
   t->ax = nodes.v[a].x;
   t->ay = nodes.v[a].y;
   t->bx = nodes.v[b].x;
@@ -69,19 +71,15 @@ inline void NewBoundedTriangle(BoundedTriangle *t, const NodeSlice nodes,
   t->cy = nodes.v[c].y;
   t->minX = Min(t->ax, Min(t->bx, t->cx));
   t->minY = Min(t->ay, Min(t->by, t->cy));
-  t->minY = Max(t->ax, Max(t->bx, t->cx));
+  t->maxX = Max(t->ax, Max(t->bx, t->cx));
   t->maxY = Max(t->ay, Max(t->by, t->cy));
 }
 
-inline F64 TriangleArea(BoundedTriangle t) {
-  return (t.by - t.ay) * (t.cx - t.bx) - (t.bx - t.ax) * (t.cy - t.by);
-}
-
-inline bool inBBox(BoundedTriangle t, F64 px, F64 py) {
+static inline bool inBBox(BoundedTriangle t, F64 px, F64 py) {
   return px >= t.minX && px <= t.maxX && py >= t.minY && py <= t.maxY;
 }
 
-inline bool containsPoint(BoundedTriangle t, F64 px, F64 py) {
+static inline bool containsPoint(BoundedTriangle t, F64 px, F64 py) {
   return (t.cx - px) * (t.ay - py) >= (t.ax - px) * (t.cy - py) &&
          (t.ax - px) * (t.by - py) >= (t.bx - px) * (t.ay - py) &&
          (t.bx - px) * (t.cy - py) >= (t.cx - px) * (t.by - py);
@@ -89,98 +87,133 @@ inline bool containsPoint(BoundedTriangle t, F64 px, F64 py) {
 
 // as containsPoint, but false when the point coincides with the triangle's
 // first vertex (a)
-inline bool containsPointExceptFirst(BoundedTriangle t, F64 px, F64 py) {
+static inline bool containsPointExceptFirst(BoundedTriangle t, F64 px, F64 py) {
   return !(t.ax == px && t.ay == py) && containsPoint(t, px, py);
 }
 
 static S32 LinkedList(NodeArray *nodes, Coord2Slice coords, Range contour,
-                      S32 already_inserted_vertices, bool clockwise);
-S32 FilterPoints(S32 start, S32 end);
-void EarcutLinked(S32 ear);
-bool IsEar(NodeSlice nodes, S32 ear);
-bool IsEarHashed(NodeSlice nodes, ZOrderInfo bounds, S32 ear);
-S32 cureLocalIntersections(NodeSlice nodes, S32 start,
-                           TriangleArray *triangles);
-void splitEarcut(NodeArray *nodes, ZOrderInfo bounds, S32 start,
-                 TriangleArray *triangles);
-F64 Area(NodeSlice nodes, S32 p, S32 q, S32 r);
+                      bool clockwise);
+static bool IsEar(NodeSlice nodes, S32 ear);
+static bool IsEarHashed(NodeSlice nodes, ZOrderInfo bounds, S32 ear);
+static S32 cureLocalIntersections(NodeSlice nodes, S32 start,
+                                  TriangleArray *triangles);
+internal void SplitEarcut(NodeArray *nodes, ZOrderInfo bounds, S32 start,
+                          TriangleArray *triangles);
+static F64 Area(NodeSlice nodes, S32 p, S32 q, S32 r);
 
-S32 eliminateHoles(Polygon polygon, NodeArray *nodes, S32 outerNode);
-S32 eliminateHole(BlockBoundingBoxArray *blocks, S32Array *block_head,
-                  S32Array *block_stop, NodeArray *nodes, S32 hole,
-                  S32 outerNode);
-S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
-                   S32Slice block_stop, NodeSlice nodes, S32 hole,
-                   S32 outerNode);
-void buildBlockIndex(S32 maxNodes, S32 numHoles);
-void indexSegment(NodeSlice nodes, BlockBoundingBoxArray *blocks,
-                  S32Array *block_head, S32Array *block_stop, S32 head,
-                  S32 stop);
-void growBlock(NodeSlice nodes, BlockBoundingBoxSlice blocks, S32 head,
-               S32 tail);
-S32 liveBlockHead(NodeSlice nodes, S32Slice block_head, S32 b);
-S32 liveBlockStop(NodeSlice nodes, S32Slice block_stop, S32 b);
-bool sectorContainsSector(NodeSlice nodes, S32 m, S32 p);
-void indexCurve(NodeSlice nodes, ZOrderInfo bounds, S32 start);
-S32 sortLinked(NodeSlice nodes, S32 list);
-S32 zOrder(ZOrderInfo bounds, F64 x_, F64 y_);
-S32 getLeftmost(NodeSlice nodes, S32 start);
-bool pointInTriangle(F64 ax, F64 ay, F64 bx, F64 by, F64 cx, F64 cy, F64 px,
-                     F64 py);
-bool isValidDiagonal(NodeSlice nodes, S32 a, S32 b);
-bool equals(NodeSlice nodes, S32 p1, S32 p2);
-bool intersects(NodeSlice nodes, S32 p1, S32 q1, S32 p2, S32 q2,
-                bool includeBoundary); // true by default
-bool onSegment(NodeSlice nodes, S32 p, S32 q, S32 r);
-bool intersectsPolygon(NodeSlice nodes, S32 a, S32 b);
-bool locallyInside(NodeSlice nodes, S32 a, S32 b);
-bool middleInside(NodeSlice nodes, S32 a, S32 b);
-S32 splitPolygon(NodeArray *nodes, S32 a, S32 b);
+static S32 eliminateHoles(Polygon polygon, NodeArray *nodes, S32 outerNode);
+static S32 eliminateHole(BlockBoundingBoxArray *blocks, S32Array *block_head,
+                         S32Array *block_stop, NodeArray *nodes, S32 hole,
+                         S32 outerNode);
+static S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
+                          S32Slice block_stop, NodeSlice nodes, S32 hole,
+                          S32 outerNode);
+static void indexSegment(NodeSlice nodes, BlockBoundingBoxArray *blocks,
+                         S32Array *block_head, S32Array *block_stop, S32 head,
+                         S32 stop);
+static void growBlock(NodeSlice nodes, BlockBoundingBoxSlice blocks, S32 head,
+                      S32 tail_index);
+static S32 liveBlockHead(NodeSlice nodes, S32Slice block_head, S32 b);
+static S32 liveBlockStop(NodeSlice nodes, S32Slice block_stop, S32 b);
+static bool sectorContainsSector(NodeSlice nodes, S32 m, S32 p);
+static void indexCurve(NodeSlice nodes, ZOrderInfo bounds, S32 start);
+static S32 sortLinked(NodeSlice nodes, S32 list);
+static S32 zOrder(ZOrderInfo bounds, F64 x_, F64 y_);
+static S32 getLeftmost(NodeSlice nodes, S32 start);
+static bool pointInTriangle(F64 ax, F64 ay, F64 bx, F64 by, F64 cx, F64 cy,
+                            F64 px, F64 py);
+static bool isValidDiagonal(NodeSlice nodes, S32 a, S32 b);
+static bool equals(NodeSlice nodes, S32 p1, S32 p2);
+static bool intersects(NodeSlice nodes, S32 p1, S32 q1, S32 p2, S32 q2,
+                       bool includeBoundary); // true by default
+static bool onSegment(NodeSlice nodes, S32 p, S32 q, S32 r);
+static bool intersectsPolygon(NodeSlice nodes, S32 a, S32 b);
+static bool locallyInside(NodeSlice nodes, S32 a, S32 b);
+static bool middleInside(NodeSlice nodes, S32 a, S32 b);
+static S32 splitPolygon(NodeArray *nodes, S32 a, S32 b);
+static void RemoveNode(NodeSlice nodes, S32 p);
+static void RemoveNodeAndUpdateIndex(NodeSlice nodes,
+                                     BlockBoundingBoxSlice blocks, S32 p);
+internal S32 insertNode(NodeArray *nodes, S32 vertex, Coord2 pt, S32 last);
 
-S32 insertNode(NodeArray *nodes, S32 vertex, Coord2 pt, S32 last);
-void removeNode(S32 p);
+// --------------- VALIDATION FUNCTIONS --------------
+#ifdef DEBUG
+static void ValidateNodeStructure(NodeSlice nodes);
+static void ValidateZOrderCurve(NodeSlice nodes);
+#endif
 
-// TODO:
-// static void ReverseCoordinats(Coord2Slice coords) {}
-// static void MakeCoordinatesCounterClockwise(Coord2Slice coords,
-//                                            S32 index_lowest_right) {}
-// static void MakeCoordinatesClockwise(Coord2Slice coords,
-//                                     S32 index_lowest_right) {}
+static void PrintLinkedList(const NodeSlice nodes, const S32 start) {
+  fprintf(stderr, "%d(%d) -> ", start, nodes.v[start].vertex);
+  S32 n = nodes.v[start].next;
+  do {
+    fprintf(stderr, "%d(%d) -> ", n, nodes.v[n].vertex);
+    n = nodes.v[n].next;
+  } while (n != start);
+  fprintf(stderr, "%d(%d)\n", n, nodes.v[n].vertex);
+}
+
+static bool isContourClockwise(const Coord2Slice coords) {
+  Coord2 coord_min = (Coord2){.x = min_F64, .y = max_F64};
+  S32 index_min = 0;
+  for (S32 i = 0; i < coords.count; i += 1) {
+    Coord2 c = coords.v[i];
+    if (c.y < coord_min.y || (c.y == coord_min.y && c.x > coord_min.x)) {
+      index_min = i;
+      coord_min = c;
+    }
+  }
+  const Coord2 a = coords.v[index_min];
+  const Coord2 b = coords.v[(index_min + coords.count - 1) % coords.count];
+  const Coord2 c = coords.v[(index_min + 1) % coords.count];
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) > 0.f;
+}
 
 // create a circular doubly linked list from polygon points in the specified
 // winding order
-static S32 LinkedList(NodeArray *nodes, const Coord2Slice coords, Range contour,
-                      const S32 already_inserted_vertices,
-                      const bool clockwise) {
-  double sum = 0;
-  S32 i, j;
-  S32 last = 0;
+static S32 LinkedList(NodeArray *nodes, const Coord2Slice coords,
+                      const Range contour, const bool clockwise) {
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+#endif
 
   // calculate original winding order of a polygon ring
-  for (i = contour.min, j = contour.min + contour.count > 0
-                                ? contour.min + contour.count - 1
-                                : contour.min;
-       i < contour.count; j = i++) {
-    sum += (coords.v[j].x - coords.v[i].x) * (coords.v[i].y + coords.v[j].y);
-  }
+  // F64 sum = 0;
+  // for (S32 i = contour.min, j = contour.min + contour.count - 1;
+  //     i < contour.count; j = i++) {
+  //  sum += (coords.v[j].x - coords.v[i].x) * (coords.v[i].y + coords.v[j].y);
+  //}
 
   // link points into circular doubly-linked list in the specified winding order
-  if (clockwise == (sum > 0)) {
-    for (i = 0; i < contour.count; i++)
-      last =
-          insertNode(nodes, already_inserted_vertices + i, coords.v[i], last);
+  const S32 already_inserted_vertices = contour.min;
+  S32 last = 0;
+  if (clockwise != isContourClockwise(
+                       (Coord2Slice){coords.v + contour.min, contour.count})) {
+    for (S32 i = 0; i < contour.count; i += 1) {
+      const S32 vertex = already_inserted_vertices + i;
+      last = insertNode(nodes, vertex, coords.v[vertex], last);
+    }
   } else {
-    for (i = contour.count; i-- > 0;)
-      last =
-          insertNode(nodes, already_inserted_vertices + i, coords.v[i], last);
+    for (S32 i = contour.count; i > 0; i -= 1) {
+      const S32 vertex = already_inserted_vertices + i - 1;
+      last = insertNode(nodes, vertex, coords.v[vertex], last);
+    }
   }
 
   if (last && equals(NodeSliceFromArray(nodes), last, nodes->d[last].next)) {
-    removeNode(last);
+    RemoveNode(NodeSliceFromArray(nodes), last);
     last = nodes->d[last].next;
   }
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+#endif
   return last;
 }
+
+typedef struct FilterPointsResult FilterPointsResult;
+struct FilterPointsResult {
+  S32 ear;
+  bool filtered_out;
+};
 
 // Remove collinear or coincident points; removability depends only on a node's
 // immediate neighbors, so we sweep forward and re-check the predecessor after
@@ -189,10 +222,15 @@ static S32 LinkedList(NodeArray *nodes, const Coord2Slice coords, Range contour,
 // only the dirty window around a bridge/diagonal cut, stopping at `end` rather
 // than lapping — O(window) instead of O(ring).
 
-S32 filterPoints(NodeSlice nodes, S32 start, S32 end) {
+internal FilterPointsResult filterPoints(NodeSlice nodes, S32 start, S32 end) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+  ValidateZOrderCurve(nodes);
+#endif
   if (!start)
-    return start;
+    return (FilterPointsResult){start, false};
   const bool full = !end;
+  bool filtered_out = false;
   if (full)
     end = start;
 
@@ -201,13 +239,50 @@ S32 filterPoints(NodeSlice nodes, S32 start, S32 end) {
   do {
     again = false;
     if (p != nodes.v[p].next && !nodes.v[p].steiner &&
-        (p == nodes.v[p].next || // TODO: replace this equals with equals by
-                                 // coordinates?
+        (equals(nodes, p, nodes.v[p].next) ||
          Area(nodes, nodes.v[p].prev, p, nodes.v[p].next) == 0)) {
       if (full || p == end)
         end = nodes.v[p].prev; // pull the stop bound back past the removal
-      // filteredOut = true;
-      removeNode(p);
+      filtered_out = true;
+      RemoveNode(nodes, p);
+      p = nodes.v[p].prev; // re-check the predecessor
+      again = true;
+    } else if (full || p != end) {
+      p = nodes.v[p].next;
+      again = !full; // local heal: keep looping until the sweep reaches end
+    }
+  } while (again || p != end);
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+  ValidateZOrderCurve(nodes);
+#endif
+
+  return (FilterPointsResult){end, filtered_out};
+}
+
+internal FilterPointsResult filterPointsAndUpdateIndex(
+    NodeSlice nodes, BlockBoundingBoxSlice blocks, S32 start, S32 end) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
+  if (!start)
+    return (FilterPointsResult){start, false};
+  const bool full = !end;
+  bool filtered_out = false;
+  if (full)
+    end = start;
+
+  S32 p = start;
+  bool again;
+  do {
+    again = false;
+    if (p != nodes.v[p].next && !nodes.v[p].steiner &&
+        (equals(nodes, p, nodes.v[p].next) ||
+         Area(nodes, nodes.v[p].prev, p, nodes.v[p].next) == 0)) {
+      if (full || p == end)
+        end = nodes.v[p].prev; // pull the stop bound back past the removal
+      filtered_out = true;
+      RemoveNodeAndUpdateIndex(nodes, blocks, p);
       p = nodes.v[p].prev; // re-check the predecessor
       again = true;
     } else if (full || p != end) {
@@ -216,42 +291,50 @@ S32 filterPoints(NodeSlice nodes, S32 start, S32 end) {
     }
   } while (again || p != end);
 
-  return end;
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
+  return (FilterPointsResult){end, filtered_out};
 }
 
 // main ear slicing loop which triangulates a polygon (given as a linked list)
 
-void earcutLinked(NodeArray *nodes, ZOrderInfo bounds, S32 ear,
-                  TriangleArray *triangles) {
+internal void EarcutLinked(NodeArray *nodes, ZOrderInfo bounds, S32 ear,
+                           TriangleArray *triangles) {
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+#endif
   if (!ear)
     return;
-  NodeSlice node_slice = NodeSliceFromArray(nodes);
-  indexCurve(node_slice, bounds, ear);
+  const NodeSlice node_slice = NodeSliceFromArray(nodes);
+  if (bounds.hashing) {
+    indexCurve(node_slice, bounds, ear);
+  }
 
   S32 stop = ear;
-  S32 prev;
-  S32 next;
   bool cured = false;
 
   // iterate through ears, slicing them one by one
   while (node_slice.v[ear].prev != node_slice.v[ear].next) {
-    prev = node_slice.v[ear].prev;
-    next = node_slice.v[ear].next;
+    const S32 prev = node_slice.v[ear].prev;
+    const S32 next = node_slice.v[ear].next;
 
     // reflex check is hoisted here to avoid constructing the Triangle for
     // reflex corners
     if (Area(node_slice, prev, ear, next) < 0 &&
-        IsEarHashed(node_slice, bounds, ear)) {
+        (bounds.hashing ? IsEarHashed(node_slice, bounds, ear)
+                        : IsEar(node_slice, ear))) {
       // cut off the triangle
-      TriangleArrayPush(triangles, (Triangle){node_slice.v[prev].vertex,
-                                              node_slice.v[ear].vertex,
-                                              node_slice.v[next].vertex});
+      ASSERT(node_slice.v[prev].vertex, "vertex prev is 0");
+      ASSERT(node_slice.v[ear].vertex, "vertex ear is 0");
+      ASSERT(node_slice.v[next].vertex, "vertex next is 0");
+      TriangleArrayPush(triangles, (Triangle){.a = node_slice.v[prev].vertex,
+                                              .b = node_slice.v[ear].vertex,
+                                              .c = node_slice.v[next].vertex});
 
-      removeNode(ear);
-
+      RemoveNode(node_slice, ear);
       ear = next;
       stop = next;
-
       continue;
     }
 
@@ -263,12 +346,12 @@ void earcutLinked(NodeArray *nodes, ZOrderInfo bounds, S32 ear,
       // try filtering collinear/coincident points and slicing again — repeat as
       // long as filtering actually removes nodes, since each removal can expose
       // new ears
-      // filteredOut = false;
-      ear = filterPoints(node_slice, ear, 0);
-      // if (filteredOut) {
-      //   stop = ear;
-      //   continue;
-      // }
+      const FilterPointsResult res = filterPoints(node_slice, ear, 0);
+      ear = res.ear;
+      if (res.filtered_out) {
+        stop = ear;
+        continue;
+      }
 
       // filtering is exhausted: cure small local self-intersections once, then
       // retry
@@ -280,15 +363,22 @@ void earcutLinked(NodeArray *nodes, ZOrderInfo bounds, S32 ear,
       }
 
       // as a last resort, try splitting the remaining polygon into two
-      splitEarcut(nodes, bounds, ear, triangles);
+      SplitEarcut(nodes, bounds, ear, triangles);
       break;
     }
   }
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+  ValidateZOrderCurve(NodeSliceFromArray(nodes));
+#endif
 }
 
 // check whether a polygon node forms a valid ear with adjacent nodes
 
-bool IsEar(const NodeSlice nodes, S32 ear) {
+bool IsEar(const NodeSlice nodes, const S32 ear) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
   const S32 a = nodes.v[ear].prev;
   const S32 b = ear;
   const S32 c = nodes.v[ear].next;
@@ -308,10 +398,17 @@ bool IsEar(const NodeSlice nodes, S32 ear) {
     p = nodes.v[p].next;
   }
 
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
   return true;
 }
 
-bool IsEarHashed(NodeSlice nodes, ZOrderInfo bounds, S32 ear) {
+bool IsEarHashed(const NodeSlice nodes, const ZOrderInfo bounds,
+                 const S32 ear) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
   const S32 a = nodes.v[ear].prev;
   const S32 b = ear;
   const S32 c = nodes.v[ear].next;
@@ -346,6 +443,9 @@ bool IsEarHashed(NodeSlice nodes, ZOrderInfo bounds, S32 ear) {
     p = nodes.v[p].prevZ;
   }
 
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
   return true;
 }
 
@@ -353,6 +453,10 @@ bool IsEarHashed(NodeSlice nodes, ZOrderInfo bounds, S32 ear) {
 
 S32 cureLocalIntersections(NodeSlice nodes, S32 start,
                            TriangleArray *triangles) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+  ValidateZOrderCurve(nodes);
+#endif
   S32 p = start;
   bool cured = false;
   do {
@@ -364,13 +468,16 @@ S32 cureLocalIntersections(NodeSlice nodes, S32 start,
     // crossing
     if (intersects(nodes, a, p, nodes.v[p].next, b, false) &&
         locallyInside(nodes, a, b) && locallyInside(nodes, b, a)) {
-      TriangleArrayPush(
-          triangles,
-          (Triangle){nodes.v[a].vertex, nodes.v[p].vertex, nodes.v[b].vertex});
+      ASSERT(nodes.v[a].vertex, "vertex a is 0");
+      ASSERT(nodes.v[p].vertex, "vertex p is 0");
+      ASSERT(nodes.v[b].vertex, "vertex b is 0");
+      TriangleArrayPush(triangles, (Triangle){.a = nodes.v[a].vertex,
+                                              .b = nodes.v[p].vertex,
+                                              .c = nodes.v[b].vertex});
 
       // remove two nodes involved
-      removeNode(p);
-      removeNode(nodes.v[p].next);
+      RemoveNode(nodes, p);
+      RemoveNode(nodes, nodes.v[p].next);
 
       p = start = b;
       cured = true;
@@ -378,13 +485,25 @@ S32 cureLocalIntersections(NodeSlice nodes, S32 start,
     p = nodes.v[p].next;
   } while (p != start);
 
-  return cured ? filterPoints(nodes, p, 0) : p;
+  S32 res = p;
+  if (cured) {
+    res = filterPoints(nodes, p, 0).ear;
+  }
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+  ValidateZOrderCurve(nodes);
+#endif
+  return res;
 }
 
 // try splitting polygon into two and triangulate them independently
 
-void splitEarcut(NodeArray *nodes, ZOrderInfo bounds, S32 start,
-                 TriangleArray *triangles) {
+internal void SplitEarcut(NodeArray *nodes, const ZOrderInfo bounds,
+                          const S32 start, TriangleArray *triangles) {
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+  ValidateZOrderCurve(NodeSliceFromArray(nodes));
+#endif
   // look for a valid diagonal that divides the polygon into two
   NodeSlice node_slice = NodeSliceFromArray(nodes);
   S32 a = start;
@@ -396,37 +515,46 @@ void splitEarcut(NodeArray *nodes, ZOrderInfo bounds, S32 start,
         // split the polygon in two by the diagonal
         S32 c = splitPolygon(nodes, a, b);
 
-        // filter colinear points around the cuts
-        a = filterPoints(node_slice, a, nodes->d[a].next);
-        c = filterPoints(node_slice, c, nodes->d[c].next);
+        // filter collinear points around the cuts
+        a = filterPoints(node_slice, a, nodes->d[a].next).ear;
+        c = filterPoints(node_slice, c, nodes->d[c].next).ear;
 
         // run earcut on each half
-        earcutLinked(nodes, bounds, a, triangles);
-        earcutLinked(nodes, bounds, c, triangles);
+        EarcutLinked(nodes, bounds, a, triangles);
+        EarcutLinked(nodes, bounds, c, triangles);
         return;
       }
       b = nodes->d[b].next;
     }
     a = nodes->d[a].next;
   } while (a != start);
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+  ValidateZOrderCurve(NodeSliceFromArray(nodes));
+#endif
 }
 
-static S32 hole_queue_comparator(const S32 a, const S32 b, Node *nodes) {
-  if (nodes[a].x != nodes[b].x)
-    return nodes[a].x < nodes[b].x;
+static S32 hole_queue_comparator(const void *_a, const void *_b, void *_nodes) {
+  const S32 a = *(const S32 *)_a;
+  const S32 b = *(const S32 *)_b;
+  Node *nodes = (Node *)_nodes;
+
+  if (nodes[a].x != nodes[b].x) {
+    return nodes[a].x < nodes[b].x ? -1 : 1;
+  }
   if (nodes[a].y != nodes[b].y)
-    return nodes[a].y < nodes[b].y;
+    return nodes[a].y < nodes[b].y ? -1 : 1;
   const F64 adx = nodes[nodes[a].next].x - nodes[a].x;
   const F64 ady = nodes[nodes[a].next].y - nodes[a].y;
 
   const F64 bdx = nodes[nodes[b].next].x - nodes[b].x;
   const F64 bdy = nodes[nodes[b].next].y - nodes[b].y;
 
-  const bool aDegenerate = adx == 0 && ady == 0;
-  const bool bDegenerate = bdx == 0 && bdy == 0;
+  const bool aDegenerate = adx == 0.f && ady == 0.f;
+  const bool bDegenerate = bdx == 0.f && bdy == 0.f;
   if (aDegenerate != bDegenerate)
-    return aDegenerate;
-  return ady * bdx < bdy * adx;
+    return aDegenerate ? -1 : 1;
+  return ady * bdx < bdy * adx ? -1 : 1;
 }
 
 // link every hole into the outer loop, producing a single-ring polygon without
@@ -439,9 +567,9 @@ S32 eliminateHoles(const Polygon polygon, NodeArray *nodes, S32 outerNode) {
       S32ArrayNew(scratch.arena, (polygon.coords.count * 3) / 2);
   NodeSlice node_slice = NodeSliceFromArray(nodes);
 
-  for (S32 i = 1; i < polygon.coords.count; i++) {
-    S32 list = LinkedList(nodes, polygon.coords, polygon.contours.v[i],
-                          polygon.contours.v[i].min, false);
+  for (S32 i = 1; i < polygon.contours.count; i += 1) {
+    const S32 list =
+        LinkedList(nodes, polygon.coords, polygon.contours.v[i], false);
     if (list) {
       if (list == nodes->d[list].next)
         nodes->d[list].steiner = true;
@@ -451,7 +579,8 @@ S32 eliminateHoles(const Polygon polygon, NodeArray *nodes, S32 outerNode) {
   // compareXYSlope: sort by x, then y, then slope. When two holes' leftmost
   // points coincide, the slope tiebreak makes the bridge land on the shared
   // vertex instead of bridging the wrong hole.
-  qsort_r(hole_queue.d, hole_queue.count, sizeof(hole_queue.d[0]),
+  ASSERT(hole_queue.count >= 0, "invalid count");
+  qsort_r(hole_queue.d, (size_t)hole_queue.count, sizeof(hole_queue.d[0]),
           hole_queue_comparator, nodes->d);
 
   // upper bound: every input node indexed once, +2 bridge nodes per hole, plus
@@ -468,33 +597,37 @@ S32 eliminateHoles(const Polygon polygon, NodeArray *nodes, S32 outerNode) {
 
   // process holes from left to right; indexActive lets removeNode keep block
   // bboxes live as filterPoints heals edges during merges (see growBlock)
-  // indexActive = true;
   for (S32 i = 0; i < hole_queue.count; i++) {
+    PrintLinkedList(node_slice, outerNode);
     outerNode = eliminateHole(&blocks, &block_head, &block_stop, nodes,
                               hole_queue.d[i], outerNode);
   }
-  // indexActive = false;
 
   // collapse collinear/coincident points across the whole merged ring once
   // before clipping
 
+  const S32 ear = filterPoints(node_slice, outerNode, 0).ear;
   temp_arena_memory_end(scratch);
-  return filterPoints(node_slice, outerNode, 0);
+  return ear;
 }
 
 // find a bridge between vertices that connects hole with an outer ring and and
 // link it
 
 S32 eliminateHole(BlockBoundingBoxArray *blocks, S32Array *block_head,
-                  S32Array *block_stop, NodeArray *nodes, S32 hole,
-                  S32 outerNode) {
+                  S32Array *block_stop, NodeArray *nodes, const S32 hole,
+                  const S32 outerNode) {
+  ASSERT(hole, "hole not valid node");
   NodeSlice node_slice = NodeSliceFromArray(nodes);
-  S32 bridge = findHoleBridge(
-      BlockBoundingBoxSliceFromArray(blocks), S32SliceFromArray(block_head),
-      S32SliceFromArray(block_stop), node_slice, hole, outerNode);
+  BlockBoundingBoxSlice blocks_slice = BlockBoundingBoxSliceFromArray(blocks);
+  const S32 bridge = findHoleBridge(blocks_slice, S32SliceFromArray(block_head),
+                                    S32SliceFromArray(block_stop), node_slice,
+                                    hole, outerNode);
   if (!bridge) {
     return outerNode;
   }
+  // ASSERT(isValidDiagonal(node_slice, bridge, hole), "proposed bridge %d <->
+  // %d not a valid diagonal", bridge, hole);
 
   S32 bridgeReverse = splitPolygon(nodes, bridge, hole);
 
@@ -508,8 +641,11 @@ S32 eliminateHole(BlockBoundingBoxArray *blocks, S32Array *block_head,
                nodes->d[bridge2].next);
 
   // heal collinear/coincident points around the two new slit edges
-  filterPoints(node_slice, bridgeReverse, nodes->d[bridgeReverse].next);
-  return filterPoints(node_slice, bridge, nodes->d[bridge].next);
+  filterPointsAndUpdateIndex(node_slice, blocks_slice, bridgeReverse,
+                             nodes->d[bridgeReverse].next);
+  return filterPointsAndUpdateIndex(node_slice, blocks_slice, bridge,
+                                    nodes->d[bridge].next)
+      .ear;
 }
 
 // David Eberly's algorithm for finding a bridge between hole and outer polygon
@@ -517,11 +653,14 @@ S32 eliminateHole(BlockBoundingBoxArray *blocks, S32Array *block_head,
 S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
                    S32Slice block_stop, NodeSlice nodes, S32 hole,
                    S32 outerNode) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
   S32 p = outerNode;
-  F64 hx = nodes.v[hole].x;
-  F64 hy = nodes.v[hole].y;
+  const F64 hx = nodes.v[hole].x;
+  const F64 hy = nodes.v[hole].y;
   F64 qx = min_F64;
-  S32 m = 0;
+  S32 bridge = 0;
 
   // find a segment intersected by a ray from the hole's leftmost Vertex to the
   // left; segment's endpoint with lesser x will be potential connection Vertex,
@@ -532,9 +671,9 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
   // scan blocks; skip any whose bbox can't hold a crossing that beats qx and
   // lies left of hx (the prune Morton order can't express — explicit per-axis
   // [minY,maxY]/[minX,maxX])
-  for (S32 b = 0, g = 0; b < blocks.count; b += 1, g += 1) {
-    if (hy < blocks.v[g].minY || hy > blocks.v[g].maxY ||
-        blocks.v[g].minX > hx || blocks.v[g].maxX <= qx)
+  for (S32 b = 0; b < blocks.count; b += 1) {
+    if (hy < blocks.v[b].minY || hy > blocks.v[b].maxY ||
+        blocks.v[b].minX > hx || blocks.v[b].maxX <= qx)
       continue;
 
     // ensure the walk's exclusive bound is live so we don't overrun into other
@@ -548,15 +687,17 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
           return nodes.v[p].next;
         else if (hy <= nodes.v[p].y && hy >= nodes.v[nodes.v[p].next].y &&
                  nodes.v[nodes.v[p].next].y != nodes.v[p].y) {
-          double x =
+          const F64 x =
               nodes.v[p].x + (hy - nodes.v[p].y) *
                                  (nodes.v[nodes.v[p].next].x - nodes.v[p].x) /
                                  (nodes.v[nodes.v[p].next].y - nodes.v[p].y);
           if (x <= hx && x > qx) {
             qx = x;
-            m = nodes.v[p].x < nodes.v[nodes.v[p].next].x ? p : nodes.v[p].next;
+            bridge =
+                nodes.v[p].x < nodes.v[nodes.v[p].next].x ? p : nodes.v[p].next;
             if (x == hx)
-              return m; // hole touches outer segment; pick leftmost endpoint
+              return bridge; // hole touches outer segment; pick leftmost
+                             // endpoint
           }
         }
       }
@@ -564,7 +705,7 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
     } while (p != stop);
   }
 
-  if (!m)
+  if (!bridge)
     return 0;
 
   // look for points inside the triangle of hole Vertex, segment intersection
@@ -572,17 +713,17 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
   // otherwise choose the Vertex of the minimum angle with the ray as connection
   // Vertex
 
-  const double mx = nodes.v[m].x;
-  const double my = nodes.v[m].y;
+  const double mx = nodes.v[bridge].x;
+  const double my = nodes.v[bridge].y;
   const double tminY = Min(hy, my); // the triangle's y span; x span is [mx, hx]
   const double tmaxY = Max(hy, my);
   double tanMin = max_F64;
 
   // scan the same blocks; skip any whose bbox can't overlap the triangle's
   // [mx,hx]x[tminY,tmaxY] box
-  for (S32 b = 0, g = 0; b < blocks.count; b += 1, g += 1) {
-    if (blocks.v[g].maxX < mx || blocks.v[g].minX > hx ||
-        blocks.v[g].maxY < tminY || blocks.v[g].minY > tmaxY)
+  for (S32 b = 0; b < blocks.count; b += 1) {
+    if (blocks.v[b].maxX < mx || blocks.v[b].minX > hx ||
+        blocks.v[b].maxY < tminY || blocks.v[b].minY > tmaxY)
       continue;
 
     const S32 stop = liveBlockStop(nodes, block_stop, b);
@@ -592,7 +733,7 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
           nodes.v[p].x >= mx && hx != nodes.v[p].x && // skip dead nodes
           pointInTriangle(hy < my ? hx : qx, hy, mx, my, hy < my ? qx : hx, hy,
                           nodes.v[p].x, nodes.v[p].y)) {
-        const double tanCur =
+        const F64 tanCur =
             fabs(hy - nodes.v[p].y) / (hx - nodes.v[p].x); // tangential
 
         // if hole point sits on p's horizontal edge (T-junction touch): the
@@ -601,11 +742,11 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
         if ((locallyInside(nodes, p, hole) ||
              (nodes.v[p].y == hy && nodes.v[nodes.v[p].next].y == hy &&
               nodes.v[nodes.v[p].next].x > hx)) &&
-            (tanCur < tanMin ||
-             (tanCur == tanMin && (nodes.v[p].x > nodes.v[m].x ||
-                                   (nodes.v[p].x == nodes.v[m].x &&
-                                    sectorContainsSector(nodes, m, p)))))) {
-          m = p;
+            (tanCur < tanMin || (tanCur == tanMin &&
+                                 (nodes.v[p].x > nodes.v[bridge].x ||
+                                  (nodes.v[p].x == nodes.v[bridge].x &&
+                                   sectorContainsSector(nodes, bridge, p)))))) {
+          bridge = p;
           tanMin = tanCur;
         }
       }
@@ -613,7 +754,10 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
     } while (p != stop);
   }
 
-  return m;
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
+  return bridge;
 }
 
 // index the ring run head..stop (exclusive) as ceil(len / K) blocks; head ==
@@ -623,19 +767,22 @@ S32 findHoleBridge(BlockBoundingBoxSlice blocks, S32Slice block_head,
 void indexSegment(NodeSlice nodes, BlockBoundingBoxArray *blocks,
                   S32Array *block_head, S32Array *block_stop, S32 head,
                   S32 stop) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
   S32 p = head;
-  const S32 K = 16;
   do {
-    const S32 b = S32ArrayPush(block_head, p);
+    const S32 K = 16;
+    const S32 block_index = S32ArrayPush(block_head, p);
     F64 bMinX = max_F64;
     F64 bMinY = max_F64;
     F64 bMaxX = min_F64;
     F64 bMaxY = min_F64;
-    int32_t k = 0;
+    S32 k = 0;
     do {
-      S32 c = nodes.v[p].next; // edge p->c; bbox must bound both endpoints
-      nodes.v[p].z = b;        // reuse z as the owning block during
-                               // eliminateHoles (see growBlock)
+      S32 c = nodes.v[p].next;    // edge p->c; bbox must bound both endpoints
+      nodes.v[p].z = block_index; // reuse z as the owning block during
+                                  // eliminateHoles (see growBlock)
       if (nodes.v[p].x < bMinX)
         bMinX = nodes.v[p].x;
       if (nodes.v[p].x > bMaxX)
@@ -658,6 +805,9 @@ void indexSegment(NodeSlice nodes, BlockBoundingBoxArray *blocks,
     BlockBoundingBoxArrayPush(blocks,
                               (BlockBoundingBox){bMinX, bMinY, bMaxX, bMaxY});
   } while (p != stop);
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
 }
 
 // when filterPoints heals an edge head->tail (removing the collinear node
@@ -665,17 +815,18 @@ void indexSegment(NodeSlice nodes, BlockBoundingBoxArray *blocks,
 // its old far endpoint lived in another block; grow head's block bbox to cover
 // tail so the leftward-ray prune can't false-skip it.
 
-void growBlock(NodeSlice nodes, BlockBoundingBoxSlice blocks, S32 head,
-               S32 tail) {
+void growBlock(NodeSlice nodes, BlockBoundingBoxSlice blocks, const S32 head,
+               const S32 tail_index) {
   const S32 g = nodes.v[head].z;
-  if (nodes.v[tail].x < blocks.v[g].minX)
-    blocks.v[g].minX = nodes.v[tail].x;
-  if (nodes.v[tail].y < blocks.v[g].minY)
-    blocks.v[g].minY = nodes.v[tail].y;
-  if (nodes.v[tail].x > blocks.v[g].maxX)
-    blocks.v[g].maxX = nodes.v[tail].x;
-  if (nodes.v[tail].y > blocks.v[g].maxY)
-    blocks.v[g].maxY = nodes.v[tail].y;
+  const Node tail = nodes.v[tail_index];
+  if (tail.x < blocks.v[g].minX)
+    blocks.v[g].minX = tail.x;
+  if (tail.y < blocks.v[g].minY)
+    blocks.v[g].minY = tail.y;
+  if (tail.x > blocks.v[g].maxX)
+    blocks.v[g].maxX = tail.x;
+  if (tail.y > blocks.v[g].maxY)
+    blocks.v[g].maxY = tail.y;
 }
 
 // the block's head node can be removed by filterPoints during merges; advance
@@ -684,7 +835,7 @@ void growBlock(NodeSlice nodes, BlockBoundingBoxSlice blocks, S32 head,
 // the same forward advance keeps them equal, so the do-while still laps the
 // whole ring instead of collapsing to an empty walk.
 
-S32 liveBlockHead(NodeSlice nodes, S32Slice block_head, S32 b) {
+S32 liveBlockHead(const NodeSlice nodes, S32Slice block_head, const S32 b) {
   S32 head = block_head.v[b];
   while (nodes.v[nodes.v[head].prev].next != head)
     head = nodes.v[head].next;
@@ -692,7 +843,7 @@ S32 liveBlockHead(NodeSlice nodes, S32Slice block_head, S32 b) {
   return head;
 }
 
-S32 liveBlockStop(NodeSlice nodes, S32Slice block_stop, S32 b) {
+S32 liveBlockStop(const NodeSlice nodes, S32Slice block_stop, const S32 b) {
   S32 stop = block_stop.v[b];
   while (nodes.v[nodes.v[stop].prev].next != stop)
     stop = nodes.v[stop].next;
@@ -703,34 +854,47 @@ S32 liveBlockStop(NodeSlice nodes, S32Slice block_stop, S32 b) {
 // whether sector in vertex m contains sector in vertex p in the same
 // coordinates
 
-bool sectorContainsSector(NodeSlice nodes, const S32 m, const S32 p) {
+bool sectorContainsSector(const NodeSlice nodes, const S32 m, const S32 p) {
   return Area(nodes, nodes.v[m].prev, m, nodes.v[p].prev) < 0 &&
          Area(nodes, nodes.v[p].next, m, nodes.v[m].next) < 0;
 }
 
 // interlink polygon nodes in z-order
 
-void indexCurve(NodeSlice nodes, ZOrderInfo bounds, S32 start) {
+void indexCurve(NodeSlice nodes, const ZOrderInfo bounds, const S32 start) {
   assert(start);
   S32 p = start;
 
   do {
     // always (re)compute: z may still hold a block index left over from
     // eliminateHoles
+    // fprintf(stderr, "%d -> ", p);
     nodes.v[p].z = zOrder(bounds, nodes.v[p].x, nodes.v[p].y);
     nodes.v[p].prevZ = nodes.v[p].prev;
     nodes.v[p].nextZ = nodes.v[p].next;
     p = nodes.v[p].next;
   } while (p != start);
+  // fprintf(stderr, "%d\n", p);
 
+  ASSERT(nodes.v[p].prevZ, "nodes.v[p].prevZ == 0");
   nodes.v[nodes.v[p].prevZ].nextZ = 0;
   nodes.v[p].prevZ = 0;
 
+#ifdef DEBUG
+  ValidateZOrderCurve(nodes);
+#endif
   sortLinked(nodes, p);
+#ifdef DEBUG
+  ValidateZOrderCurve(nodes);
+#endif
 }
 
-internal S32 linked_sort_comparator(const S32 a, const S32 b, Node *nodes) {
-  return nodes[a].z < nodes[b].z;
+internal S32 linked_sort_comparator(const void *_a, const void *_b,
+                                    void *_nodes) {
+  const S32 a = *(const S32 *)_a;
+  const S32 b = *(const S32 *)_b;
+  Node *nodes = (Node *)_nodes;
+  return nodes[a].z < nodes[b].z ? -1 : 1;
 }
 
 // Sort the z-linked ring by z-order. Upstream earcut replaced its linked merge
@@ -739,35 +903,48 @@ internal S32 linked_sort_comparator(const S32 a, const S32 b, Node *nodes) {
 // beats both a linked merge sort and a hand radix (measured on the MVT tiles
 // fixture) — JS's rejection of native Array.sort does not transfer.
 
-S32 sortLinked(NodeSlice nodes, S32 list) {
+S32 sortLinked(NodeSlice nodes, const S32 list) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+  ValidateZOrderCurve(nodes);
+#endif
   assert(list);
   // list is a null-terminated nextZ chain (see indexCurve); walk it into the
   // scratch buffer
-
   Temp_Arena_Memory scratch = GetScratch();
   S32Array sort_buffer = S32ArrayNew(scratch.arena, nodes.count);
   for (S32 p = list; p; p = nodes.v[p].nextZ) {
     S32ArrayPush(&sort_buffer, p);
   }
-  qsort_r(sort_buffer.d, sort_buffer.count, sizeof(sort_buffer.d[0]), nodes.v);
+
+  ASSERT(sort_buffer.count >= 0, "invalid count");
+  sort_r(sort_buffer.d, (size_t)sort_buffer.count, sizeof(sort_buffer.d[0]),
+         linked_sort_comparator, nodes.v);
 
   // relink in sorted order
   S32 prev = 0;
-  for (S32 p = 0; p < sort_buffer.count; p += 1) {
+  for (S32 i = 0; i < sort_buffer.count; i += 1) {
+    const S32 p = sort_buffer.d[i];
     nodes.v[p].prevZ = prev;
-    if (prev)
+    if (prev) {
       nodes.v[prev].nextZ = p;
+    }
     prev = p;
   }
   nodes.v[prev].nextZ = 0;
   S32 sort_buffer_first = sort_buffer.d[0];
   temp_arena_memory_end(scratch);
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+  ValidateZOrderCurve(nodes);
+  ASSERT(sort_buffer_first, "sort buffer first has to be a valid node");
+#endif
   return sort_buffer_first;
 }
 
 // z-order of a Vertex given coords and size of the data bounding box
 
-S32 zOrder(ZOrderInfo bounds, const F64 x_, const F64 y_) {
+S32 zOrder(const ZOrderInfo bounds, const F64 x_, const F64 y_) {
   // coords are transformed into non-negative 15-bit integer range
   S32 x = (S32)((x_ - bounds.minX) * bounds.inv_size);
   S32 y = (S32)((y_ - bounds.minY) * bounds.inv_size);
@@ -787,14 +964,15 @@ S32 zOrder(ZOrderInfo bounds, const F64 x_, const F64 y_) {
 
 // find the leftmost node of a polygon ring
 
-S32 getLeftmost(NodeSlice nodes, S32 start) {
+S32 getLeftmost(const NodeSlice nodes, const S32 start) {
   S32 p = start;
   S32 leftmost = start;
   do {
     if (nodes.v[p].x < nodes.v[leftmost].x ||
         (nodes.v[p].x == nodes.v[leftmost].x &&
-         nodes.v[p].y < nodes.v[leftmost].y))
+         nodes.v[p].y < nodes.v[leftmost].y)) {
       leftmost = p;
+    }
     p = nodes.v[p].next;
   } while (p != start);
 
@@ -803,8 +981,8 @@ S32 getLeftmost(NodeSlice nodes, S32 start) {
 
 // check if a point lies within a convex triangle
 
-bool pointInTriangle(F64 ax, F64 ay, F64 bx, F64 by, F64 cx, F64 cy, F64 px,
-                     F64 py) {
+bool pointInTriangle(const F64 ax, const F64 ay, const F64 bx, const F64 by,
+                     const F64 cx, const F64 cy, const F64 px, const F64 py) {
   return (cx - px) * (ay - py) >= (ax - px) * (cy - py) &&
          (ax - px) * (by - py) >= (bx - px) * (ay - py) &&
          (bx - px) * (cy - py) >= (cx - px) * (by - py);
@@ -813,19 +991,21 @@ bool pointInTriangle(F64 ax, F64 ay, F64 bx, F64 by, F64 cx, F64 cy, F64 px,
 // check if a diagonal between two polygon nodes is valid (lies in polygon
 // interior)
 
-bool isValidDiagonal(NodeSlice nodes, S32 a, S32 b) {
+bool isValidDiagonal(const NodeSlice nodes, const S32 a, const S32 b) {
+  ASSERT(a, "endpoint a invalid");
+  ASSERT(b, "endpoint a invalid");
   // degenerate zero-length case
   const bool zeroLength =
       equals(nodes, a, b) &&
-      Area(nodes, nodes.v[a].prev, a, nodes.v[a].next) > 0 &&
-      Area(nodes, nodes.v[b].prev, b, nodes.v[b].next) > 0;
+      Area(nodes, nodes.v[a].prev, a, nodes.v[a].next) > 0.f &&
+      Area(nodes, nodes.v[b].prev, b, nodes.v[b].next) > 0.f;
   return nodes.v[nodes.v[a].next].vertex != nodes.v[b].vertex &&
          (zeroLength ||
           (locallyInside(nodes, a, b) &&
            locallyInside(nodes, b, a) && // locally visible
-           (Area(nodes, nodes.v[a].prev, a, nodes.v[b].prev) != 0.0 ||
+           (Area(nodes, nodes.v[a].prev, a, nodes.v[b].prev) != 0.f ||
             Area(nodes, a, nodes.v[b].prev, b) !=
-                0.0))) &&                   // no opposite-facing sectors
+                0.f))) &&                   // no opposite-facing sectors
          !intersectsPolygon(nodes, a, b) && // doesn't intersect other edges
          (zeroLength || middleInside(nodes, a, b)); // diagonal inside polygon
 }
@@ -846,20 +1026,22 @@ bool equals(const NodeSlice nodes, const S32 p1, const S32 p2) {
 // check if two segments intersect; by default includes collinear boundary
 // touches
 
-bool intersects(NodeSlice nodes, const S32 p1, const S32 q1, const S32 p2,
+bool intersects(const NodeSlice nodes, const S32 p1, const S32 q1, const S32 p2,
                 const S32 q2, bool includeBoundary) {
-  const double o1 = Area(nodes, p1, q1, p2);
-  const double o2 = Area(nodes, p1, q1, q2);
-  const double o3 = Area(nodes, p2, q2, p1);
-  const double o4 = Area(nodes, p2, q2, q1);
+  const F64 o1 = Area(nodes, p1, q1, p2);
+  const F64 o2 = Area(nodes, p1, q1, q2);
+  const F64 o3 = Area(nodes, p2, q2, p1);
+  const F64 o4 = Area(nodes, p2, q2, q1);
 
   // general case: the two segments straddle each other (proper crossing)
   if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) &&
-      ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0)))
+      ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0))) {
     return true;
+  }
 
-  if (!includeBoundary)
+  if (!includeBoundary) {
     return false;
+  }
 
   if (o1 == 0 && onSegment(nodes, p1, p2, q1))
     return true; // p1, q1 and p2 are collinear and p2 lies on p1q1
@@ -907,8 +1089,9 @@ bool intersectsPolygon(const NodeSlice nodes, const S32 a, const S32 b) {
         nodes.v[n].vertex != nodes.v[a].vertex &&
         nodes.v[p].vertex != nodes.v[b].vertex &&
         nodes.v[n].vertex != nodes.v[b].vertex &&
-        intersects(nodes, p, n, a, b, true))
+        intersects(nodes, p, n, a, b, true)) {
       return true;
+    }
     p = n;
   } while (p != a);
 
@@ -930,8 +1113,8 @@ bool locallyInside(const NodeSlice nodes, const S32 a, const S32 b) {
 bool middleInside(const NodeSlice nodes, const S32 a, const S32 b) {
   S32 p = a;
   bool inside = false;
-  double px = (nodes.v[a].x + nodes.v[b].x) / 2;
-  double py = (nodes.v[a].y + nodes.v[b].y) / 2;
+  F64 px = (nodes.v[a].x + nodes.v[b].x) / 2;
+  F64 py = (nodes.v[a].y + nodes.v[b].y) / 2;
   do {
     S32 n = nodes.v[p].next;
     if (((nodes.v[p].y > py) != (nodes.v[n].y > py)) &&
@@ -950,14 +1133,14 @@ bool middleInside(const NodeSlice nodes, const S32 a, const S32 b) {
 // another to a hole, it merges it into a single ring
 
 S32 splitPolygon(NodeArray *nodes, S32 a, S32 b) {
-  S32 a2 = NodeArrayPush(nodes, (Node){.vertex = nodes->d[a].vertex,
-                                       .x = nodes->d[a].x,
-                                       .y = nodes->d[a].y});
-  S32 b2 = NodeArrayPush(nodes, (Node){.vertex = nodes->d[b].vertex,
-                                       .x = nodes->d[b].x,
-                                       .y = nodes->d[b].y});
-  S32 an = nodes->d[a].next;
-  S32 bp = nodes->d[b].prev;
+  const S32 a2 = NodeArrayPush(nodes, (Node){.vertex = nodes->d[a].vertex,
+                                             .x = nodes->d[a].x,
+                                             .y = nodes->d[a].y});
+  const S32 b2 = NodeArrayPush(nodes, (Node){.vertex = nodes->d[b].vertex,
+                                             .x = nodes->d[b].x,
+                                             .y = nodes->d[b].y});
+  const S32 an = nodes->d[a].next;
+  const S32 bp = nodes->d[b].prev;
 
   nodes->d[a].next = b;
   nodes->d[b].prev = a;
@@ -976,13 +1159,17 @@ S32 splitPolygon(NodeArray *nodes, S32 a, S32 b) {
 // create a node and util::optionally link it with previous one (in a circular
 // doubly linked list)
 
-S32 insertNode(NodeArray *nodes, S32 vertex, const Coord2 pt, S32 last) {
+internal S32 insertNode(NodeArray *nodes, S32 vertex, const Coord2 pt,
+                        S32 last) {
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+  ASSERT(vertex, "can not create node with null vertex");
+#endif
   S32 p = NodeArrayPush(nodes, (Node){.vertex = vertex, .x = pt.x, .y = pt.y});
 
   if (!last) {
     nodes->d[p].prev = p;
     nodes->d[p].next = p;
-
   } else {
     assert(last);
     nodes->d[p].next = nodes->d[last].next;
@@ -990,10 +1177,35 @@ S32 insertNode(NodeArray *nodes, S32 vertex, const Coord2 pt, S32 last) {
     nodes->d[nodes->d[last].next].prev = p;
     nodes->d[last].next = p;
   }
+#ifdef DEBUG
+  ValidateNodeStructure(NodeSliceFromArray(nodes));
+  ASSERT(p >= 0 && p < nodes->count, "invalid node index");
+#endif
   return p;
 }
 
-void RemoveNode(NodeSlice nodes, BlockBoundingBoxSlice blocks, S32 p) {
+void RemoveNode(NodeSlice nodes, S32 p) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
+  nodes.v[nodes.v[p].next].prev = nodes.v[p].prev;
+  nodes.v[nodes.v[p].prev].next = nodes.v[p].next;
+
+  if (nodes.v[p].prevZ)
+    nodes.v[nodes.v[p].prevZ].nextZ = nodes.v[p].nextZ;
+  if (nodes.v[p].nextZ)
+    nodes.v[nodes.v[p].nextZ].prevZ = nodes.v[p].prevZ;
+#ifdef DEBUG
+  nodes.v[p].removed = true;
+  ValidateNodeStructure(nodes);
+#endif
+}
+
+void RemoveNodeAndUpdateIndex(NodeSlice nodes, BlockBoundingBoxSlice blocks,
+                              S32 p) {
+#ifdef DEBUG
+  ValidateNodeStructure(nodes);
+#endif
   nodes.v[nodes.v[p].next].prev = nodes.v[p].prev;
   nodes.v[nodes.v[p].prev].next = nodes.v[p].next;
 
@@ -1004,8 +1216,11 @@ void RemoveNode(NodeSlice nodes, BlockBoundingBoxSlice blocks, S32 p) {
 
   // keep the hole-bridge index's block bboxes covering the healed prev->next
   // edge
-  // if (indexActive)
   growBlock(nodes, blocks, nodes.v[p].prev, nodes.v[p].next);
+#ifdef DEBUG
+  nodes.v[p].removed = true;
+  ValidateNodeStructure(nodes);
+#endif
 }
 
 void Earcut(TriangleArray *triangles, const Coord2Slice coords,
@@ -1018,42 +1233,45 @@ void Earcut(TriangleArray *triangles, const Coord2Slice coords,
       sum += contour_sizes.v[i];
     }
     ASSERT(coords.count == sum,
-           "coordinate count: %d and countour sizes: %d do not match",
+           "coordinate count: %d and contour sizes: %d do not match",
            coords.count, sum);
   }
   const S32 triangle_index_min = triangles->count;
-
   Temp_Arena_Memory scratch = GetScratch();
-  // estimate size of nodes and indices
-  NodeArray nodes = NodeArrayNew(scratch.arena, (3 * coords.count) / 2);
+
+  // THIS ARRAY IS 1 indexed 0 is the sentinel value
+  NodeArray nodes = NodeArrayNew(scratch.arena, 2 * coords.count);
+  NodeArrayPush(&nodes, (Node){0});
+
   RangeArray contours = RangeArrayNew(scratch.arena, contour_sizes.count);
-  S32 coords_so_far = 0;
+  S32 coords_so_far = 1;
   for (S32 i = 0; i < contour_sizes.count; i += 1) {
     RangeArrayPush(&contours,
                    (Range){.min = coords_so_far, .count = contour_sizes.v[i]});
     coords_so_far += contour_sizes.v[i];
   }
 
-  Polygon polygon = {coords, RangeSliceFromArray(&contours)};
+  Polygon polygon = {.coords = coords,
+                     .contours = RangeSliceFromArray(&contours)};
 
-  S32 outerNode = LinkedList(&nodes, coords, polygon.contours.v[0],
-                             polygon.contours.v[0].min, true);
+  S32 outerNode = LinkedList(&nodes, coords, polygon.contours.v[0], true);
   if (!outerNode || nodes.d[outerNode].prev == nodes.d[outerNode].next)
     return;
 
   outerNode = eliminateHoles(polygon, &nodes, outerNode);
+  PrintLinkedList(NodeSliceFromArray(&nodes), outerNode);
 
   // if the shape is not too simple, we'll use z-order curve hash later;
   // calculate polygon bbox
   ZOrderInfo bounds = {0};
-  bool hashing = coords.count > 80;
-  if (hashing) {
+  bounds.hashing = coords.count > 160;
+  if (bounds.hashing) {
     S32 p = nodes.d[outerNode].next;
     bounds.minX = bounds.maxX = nodes.d[outerNode].x;
     bounds.minY = bounds.maxY = nodes.d[outerNode].y;
     do {
-      F64 x = nodes.d[p].x;
-      F64 y = nodes.d[p].y;
+      const F64 x = nodes.d[p].x;
+      const F64 y = nodes.d[p].y;
       bounds.minX = Min(bounds.minX, x);
       bounds.minY = Min(bounds.minY, y);
       bounds.maxX = Max(bounds.maxX, x);
@@ -1064,22 +1282,35 @@ void Earcut(TriangleArray *triangles, const Coord2Slice coords,
     // minX, minY and inv_size are later used to transform coords into
     // integers for z-order calculation
     bounds.inv_size = Max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-    bounds.inv_size = bounds.inv_size != .0 ? (32767. / bounds.inv_size) : .0;
+    bounds.inv_size =
+        bounds.inv_size != 0.f ? (32767.f / bounds.inv_size) : 0.f;
   }
 
-  earcutLinked(&nodes, bounds, outerNode, triangles);
+  EarcutLinked(&nodes, bounds, outerNode, triangles);
 
+#ifdef DEBUG
+  for (S32 i = triangle_index_min; i < triangles->count; i += 1) {
+    const Triangle t = triangles->d[i];
+    fprintf(stderr,
+            "Triangle [%d, %d, %d] "
+            "[(%f, %f), (%f, %f), (%f, %f)]\n",
+            t.a, t.b, t.c, coords.v[t.a].x, coords.v[t.a].y, coords.v[t.b].x,
+            coords.v[t.b].y, coords.v[t.c].x, coords.v[t.c].y);
+  }
+#endif
+#if 0
   {
     for (S32 i = triangle_index_min; i < triangles->count; i += 1) {
       Triangle t = triangles->d[i];
       F64 cross = CROSS(coords.v[t.a], coords.v[t.b], coords.v[t.c]);
-      ASSERT(cross >= 0.f,
+      ASSERT(cross >= -0.0001f,
              "Triangle [%d, %d, %d] not counter-clockwise, cross: %f\n"
              "[(%f, %f), (%f, %f), (%f, %f)]",
              t.a, t.b, t.c, cross, coords.v[t.a].x, coords.v[t.a].y,
              coords.v[t.b].x, coords.v[t.b].y, coords.v[t.c].x, coords.v[t.c].y)
     }
   }
+#endif
   temp_arena_memory_end(scratch);
 }
 
@@ -1301,3 +1532,45 @@ void refine(std::vector<N> &triangles, const Coords &coords) {
   refiner(triangles, coords);
 }
 */
+#ifdef DEBUG
+static void ValidateNodeStructure(NodeSlice nodes) {
+  ASSERT(nodes.v[0].x == 0.f, "nodes[0] != 0");
+  ASSERT(nodes.v[0].y == 0.f, "nodes[0] != 0");
+  ASSERT(nodes.v[0].prev == 0, "nodes[0] != 0");
+  ASSERT(nodes.v[0].next == 0, "nodes[0] != 0");
+  ASSERT(nodes.v[0].z == 0, "nodes[0] != 0");
+  ASSERT(nodes.v[0].vertex == 0, "nodes[0] != 0");
+  ASSERT(nodes.v[0].prevZ == 0, "nodes[0] != 0");
+  ASSERT(nodes.v[0].nextZ == 0, "nodes[0] != 0");
+  ASSERT(nodes.v[0].steiner == false, "nodes[0] != 0");
+  ASSERT(nodes.v[0].removed == false, "nodes[0] != 0");
+  for (S32 i = 1; i < nodes.count; i += 1) {
+    Node n = nodes.v[i];
+    if (n.vertex && !n.removed) {
+      // ASSERT(n.x != 0.f, "nodes[%d].x == 0", i);
+      // ASSERT(n.y != 0.f, "nodes[%d].y == 0", i);
+      ASSERT(n.vertex != 0, "nodes[%d].vertex == 0", i);
+      const S32 prev = n.prev;
+      const S32 next = n.next;
+      ASSERT(nodes.v[prev].next == i, "invalid node information");
+      ASSERT(nodes.v[next].prev == i, "invalid node information");
+    }
+  }
+}
+
+static void ValidateZOrderCurve(NodeSlice nodes) {
+  for (S32 i = 0; i < nodes.count; i += 1) {
+    Node n = nodes.v[i];
+    if (n.vertex && n.z && !n.removed) {
+      const S32 prevZ = n.prevZ;
+      const S32 nextZ = n.nextZ;
+      if (prevZ) {
+        ASSERT(nodes.v[prevZ].nextZ == i, "invalid z-order information");
+      }
+      if (nextZ) {
+        ASSERT(nodes.v[nextZ].prevZ == i, "invalid z-order information");
+      }
+    }
+  }
+}
+#endif

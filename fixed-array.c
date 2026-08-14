@@ -30,9 +30,9 @@
                                                                                \
   __attribute__((always_inline)) inline S32 typename##Push(typename *stack,    \
                                                            type value) {       \
-    if (stack->count >= stack->capacity) {                           \
-      fprintf(stderr, "Array overflow, capacity: %d reached",                  \
-              stack->capacity);                                                \
+    if (stack->count >= stack->capacity) {                                     \
+      fprintf(stderr, "Array overflow, capacity: %d reached here: %s:%d\n",    \
+              stack->capacity, __FILE__, __LINE__);                            \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
     stack->d[stack->count++] = value;                                          \
@@ -50,7 +50,7 @@
   }                                                                            \
                                                                                \
   __attribute__((always_inline)) inline type typename##Peek(typename *stck) {  \
-    if (stck->count == 0) {                                           \
+    if (stck->count == 0) {                                                    \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
     return stck->d[stck->count - 1];                                           \
@@ -63,10 +63,22 @@
                                                                                \
   __attribute__((always_inline)) inline type##Slice type##SliceFromArrayExt(   \
       typename *array, S32 start, S32 length) {                                \
-    if (!array || start + length > array->capacity) {                          \
-      fprintf(stderr, "Slice too big, requested %d + %d array has len: %d\n",  \
-              start, length, array->capacity);                                 \
+    if (!array || start + length > array->count) {                             \
+      fprintf(stderr,                                                          \
+              "Slice too big, requested %d + %d array has count: %d\n", start, \
+              length, array->capacity);                                        \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
     return (type##Slice){.v = array->d + start, .count = length};              \
+  }                                                                            \
+                                                                               \
+  __attribute__((always_inline)) inline type##Slice type##SliceFromArrayStart( \
+      typename *array, S32 start) {                                            \
+    if (!array || start >= array->count) {                                     \
+      fprintf(stderr, "Slice too big, requested [%d..] array has count: %d\n", \
+              start, array->count);                                            \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+    return (type##Slice){.v = array->d + start,                                \
+                         .count = array->count - start};                       \
   }

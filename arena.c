@@ -15,7 +15,7 @@ uintptr_t align_forward(uintptr_t ptr, size_t align) {
   assert(is_power_of_two(align));
 
   uintptr_t p = ptr;
-  uintptr_t a = (uintptr_t) align;
+  uintptr_t a = (uintptr_t)align;
   // Same as (p % a) but faster as 'a' is a power of two
   uintptr_t modulo = p & (a - 1);
 
@@ -162,3 +162,12 @@ Temp_Arena_Memory scratch_get_free(Arena **arenaPool, int arenaPoolSize,
 
 #define GetScratchConflict(conflictingArenas, num)                             \
   scratch_get_free(arenas, 2, conflictingArenas, num)
+
+#define ScratchArena()                                                         \
+  for (                                                                        \
+      struct {                                                                 \
+        Temp_Arena_Memory scratch;                                             \
+        S32 latch;                                                             \
+      } arena_auto_close_latch = {GetScratch(), 0};                            \
+      arena_auto_close_latch.latch < 1; arena_auto_close_latch.latch = 1,      \
+        temp_arena_memory_end(arena_auto_close_latch.scratch))

@@ -1,4 +1,5 @@
 #include "base.h"
+#include "earcut.h"
 #include "raymath.h"
 #include "string8.c"
 #include "tessalate.h"
@@ -10,6 +11,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define SEIDEL_TRIANGULATION 0
 
 #ifdef _WIN32
 #include <memoryapi.h>
@@ -43,11 +46,6 @@ typedef struct multi_line_string {
 typedef struct contour {
   Slice coords;
 } Contour;
-
-typedef struct polygon {
-  S32 outside_coordinates;
-  Slice inside_coordinates;
-} Polygon;
 
 DeclFixedArray(PolygonArray, Polygon);
 
@@ -478,15 +476,25 @@ Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
     ERROR_MSG("Map rendrer only suppords 2D coords: was %d\n",
               coordinates->children.count)
   }
+  F64 x;
+  F64 y;
   const JsonNode *x_coordinate = coordinates->children.first;
   const JsonNode *y_coordinate = coordinates->children.last;
-  if (x_coordinate->type != JSON_DOUBLE || y_coordinate->type != JSON_DOUBLE) {
+  if (x_coordinate->type == JSON_DOUBLE) {
+    x = x_coordinate->num.dbl_value;
+  } else if (x_coordinate->type == JSON_INTEGER) {
+    x = (F64)x_coordinate->num.s_value;
+  } else {
     ERROR_MSG("invalid coordinate type for Point supplied")
   }
-  return (Coord2){
-      .x = x_coordinate->num.dbl_value,
-      .y = y_coordinate->num.dbl_value,
-  };
+  if (y_coordinate->type == JSON_DOUBLE) {
+    y = y_coordinate->num.dbl_value;
+  } else if (y_coordinate->type == JSON_INTEGER) {
+    y = (F64)y_coordinate->num.s_value;
+  } else {
+    ERROR_MSG("invalid coordinate type for Point supplied")
+  }
+  return (Coord2){.x = x, .y = y};
 }
 
 // iterate over the coordinates omitting the last one as it is
@@ -698,6 +706,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
       // create emtpy slot at vertices[0] for triangulation
       Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
 
+#if SEIDEL_TRIANGULATION
       JsonNode *contour_array = coordinates->children.first;
       if (contour_array == NULL || contour_array->children.count <= 1) {
         ERROR_MSG("invalid size for polygon contour: %d",
@@ -729,6 +738,27 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                         .count = render_data->polygon_coords.count -
                                  first_coordinate_idx},
           S32SliceFromArray(&contour_sizes));
+#else
+      JsonNode *contour_array = coordinates->children.first;
+      if (contour_array == NULL || contour_array->children.count <= 1) {
+        ERROR_MSG("invalid size for polygon contour: %d",
+                  contour_array->children.count)
+      }
+      ContourFromJsonArray(contour_array, &render_data->polygon_coords);
+      S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
+      contour_array = contour_array->next;
+      while (contour_array != NULL) {
+        S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
+        ContourFromJsonArray(contour_array, &render_data->polygon_coords);
+        contour_array = contour_array->next;
+      }
+      Earcut(&render_data->polygon_triangles,
+             (Coord2Slice){.v = vertices,
+                           .count = render_data->polygon_coords.count -
+                                    first_coordinate_idx},
+             S32SliceFromArray(&contour_sizes));
+
+#endif
 
       // we need to fix the indices as they are local to a polygon, but they
       // now point into the global coordinate array.
@@ -742,9 +772,10 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                triangle->a < render_data->polygon_coords.count);
         assert(triangle->b > first_coordinate_idx &&
                triangle->b < render_data->polygon_coords.count);
-        assert(triangle->c > first_coordinate_idx &&
-               triangle->c < render_data->polygon_coords.count);
+        assert(triangle->c > first_coordinate_idx);
+        assert(triangle->c < render_data->polygon_coords.count);
       }
+#if SEIDEL_TRIANGULATION
       for (S32 i = 0; i < render_data->polygon_triangles.count; i += 1) {
         Triangle t = render_data->polygon_triangles.d[i];
         ASSERT(CROSS(render_data->polygon_coords.d[t.a],
@@ -752,6 +783,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                      render_data->polygon_coords.d[t.c]) >= 0,
                "Triangle [%d, %d, %d] not counter-clockwise\n", t.a, t.b, t.c)
       }
+#endif
     }
 
     if (String8Equals(geometry_type->text_value,
@@ -771,6 +803,7 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
         // create emtpy slot at vertices[0] for triangulation
         Coord2ArrayPush(&render_data->multi_polygon_coords, (Coord2){0.f, 0.f});
 
+#if SEIDEL_TRIANGULATION
         JsonNode *contour_array = polygon->children.first;
         const S32 min_coordinate_index = ContourFromJsonArray(
             contour_array, &render_data->multi_polygon_coords);
@@ -803,6 +836,29 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                           .count = render_data->multi_polygon_coords.count -
                                    first_coordinate_idx},
             S32SliceFromArray(&contour_sizes));
+#else
+        JsonNode *contour_array = polygon->children.first;
+        const S32 min_coordinate_index = ContourFromJsonArray(
+            contour_array, &render_data->multi_polygon_coords);
+        S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
+        DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
+        contour_array = contour_array->next;
+        while (contour_array != NULL) {
+          ASSERT(contour_array->children.count > 1,
+                 "invalid size for polygon contour: %d",
+                 contour_array->children.count)
+          S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
+          ContourFromJsonArray(contour_array,
+                               &render_data->multi_polygon_coords);
+          contour_array = contour_array->next;
+        }
+        Earcut(&render_data->multi_polygon_triangles,
+               (Coord2Slice){.v = vertices,
+                             .count = render_data->multi_polygon_coords.count -
+                                      first_coordinate_idx},
+               S32SliceFromArray(&contour_sizes));
+
+#endif
 
         // we need to fix the indices as they are local to a polygon, but they
         // now point into the global coordinate array.
@@ -814,20 +870,20 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
           triangle->c += first_coordinate_idx;
           ASSERT(triangle->a > first_coordinate_idx &&
                      triangle->a < render_data->multi_polygon_coords.count,
-                 "multi polygon index out of range, should be inside (%d-%d), "
-                 "was: %d",
+                 "multi polygon index for a out of range, should be inside "
+                 "(%d-%d), was: %d",
                  first_coordinate_idx, render_data->multi_polygon_coords.count,
                  triangle->a);
           ASSERT(triangle->b > first_coordinate_idx &&
                      triangle->b < render_data->multi_polygon_coords.count,
-                 "multi polygon index out of range, should be inside (%d-%d), "
-                 "was: %d",
+                 "multi polygon index for b out of range, should be inside "
+                 "(%d-%d), was: %d",
                  first_coordinate_idx, render_data->multi_polygon_coords.count,
                  triangle->b);
           ASSERT(triangle->c > first_coordinate_idx &&
                      triangle->c < render_data->multi_polygon_coords.count,
-                 "multi polygon index out of range, should be inside (%d-%d), "
-                 "was: %d",
+                 "multi polygon index for c out of range, should be inside "
+                 "(%d-%d), was: %d",
                  first_coordinate_idx, render_data->multi_polygon_coords.count,
                  triangle->c);
         }
