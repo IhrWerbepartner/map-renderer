@@ -1,8 +1,7 @@
+#include "arena.c"
 #include "base.h"
-#include "earcut.h"
 #include "raymath.h"
-#include "string8.c"
-#include "tessalate.h"
+#include "string8.h"
 #include <assert.h>
 #include <errno.h>
 #include <math.h>
@@ -14,12 +13,22 @@
 
 #define SEIDEL_TRIANGULATION 0
 
+#if SEIDEL_TRIANGULATION
+#include "tessalate.h"
+#else
+#include "earcut.h"
+#endif
+
 #ifdef _WIN32
 #include <memoryapi.h>
 #else
 #include <sys/mman.h>
 #endif
 
+typedef struct Screen Screen;
+struct Screen {
+  S32 width, height;
+};
 typedef struct geo_properties {
   String8 key;
   void *val;
@@ -46,6 +55,10 @@ typedef struct multi_line_string {
 typedef struct contour {
   Slice coords;
 } Contour;
+
+typedef struct Polygon {
+  Slice polygon;
+} Polygon;
 
 DeclFixedArray(PolygonArray, Polygon);
 
@@ -79,9 +92,8 @@ typedef struct geo_json {
 
   Coord2Array polygon_coords;
   TriangleArray polygon_triangles; // triangle indices point into polygon_coords
+  PolygonArray polygons; // has an array of slices into array of triangles
 
-  Coord2Array multi_polygon_coords;
-  TriangleArray multi_polygon_triangles; // has a slice into coords
   MultiPolygonArray
       multi_polygons; // has an array of slices into array of triangles
 
@@ -114,8 +126,7 @@ void init_all_arrays(Arena *arena, GeoJson *base, S32 capacity) {
   base->polygon_coords = Coord2ArrayNew(arena, capacity);
   base->polygon_triangles = TriangleArrayNew(arena, capacity);
 
-  base->multi_polygon_coords = Coord2ArrayNew(arena, capacity);
-  base->multi_polygon_triangles = TriangleArrayNew(arena, capacity);
+  base->polygons = PolygonArrayNew(arena, capacity);
   base->multi_polygons = MultiPolygonArrayNew(arena, capacity);
 }
 
@@ -512,8 +523,7 @@ S32 ContourFromJsonArray(const JsonNode *coordinates,
               coordinates->children.count)
   }
   S32 min_index = 0;
-  Coord2 min_coordinate =
-      (Coord2){-(TRIANGULATE_INFINITY), TRIANGULATE_INFINITY};
+  Coord2 min_coordinate = (Coord2){min_F64, max_F64};
   const JsonNode *point_coords = coordinates->children.first;
   S32 index = 0;
   while (point_coords != NULL && point_coords != coordinates->children.last) {
@@ -796,21 +806,21 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
       while (polygon != NULL) {
         S32 contour_count = polygon->children.count;
         S32Array contour_sizes = S32ArrayNew(scratch.arena, contour_count);
-        Coord2 *vertices = &render_data->multi_polygon_coords
-                                .d[render_data->multi_polygon_coords.count];
-        S32 first_coordinate_idx = render_data->multi_polygon_coords.count;
-        S32 first_triangle_idx = render_data->multi_polygon_triangles.count;
+        Coord2 *vertices =
+            &render_data->polygon_coords.d[render_data->polygon_coords.count];
+        S32 first_coordinate_idx = render_data->polygon_coords.count;
+        S32 first_triangle_idx = render_data->polygon_triangles.count;
 
         // create emtpy slot at vertices[0] for triangulation
-        Coord2ArrayPush(&render_data->multi_polygon_coords, (Coord2){0.f, 0.f});
+        Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
 
 #if SEIDEL_TRIANGULATION
         JsonNode *contour_array = polygon->children.first;
-        const S32 min_coordinate_index = ContourFromJsonArray(
-            contour_array, &render_data->multi_polygon_coords);
+        const S32 min_coordinate_index =
+            ContourFromJsonArray(contour_array, &render_data->polygon_coords);
         S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
         bool outerContourIsClockwise = MakeCoordinatesCounterClockwise(
-            Coord2SliceFromArrayExt(&render_data->multi_polygon_coords,
+            Coord2SliceFromArrayExt(&render_data->polygon_coords,
                                     first_coordinate_idx + 1,
                                     contour_array->children.count - 1),
             min_coordinate_index);
@@ -823,23 +833,22 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
           S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
           if (outerContourIsClockwise) {
             ContourFromJsonArrayReversed(contour_array,
-                                         &render_data->multi_polygon_coords);
+                                         &render_data->polygon_coords);
           } else {
-            ContourFromJsonArray(contour_array,
-                                 &render_data->multi_polygon_coords);
+            ContourFromJsonArray(contour_array, &render_data->polygon_coords);
           }
           contour_array = contour_array->next;
         }
 
         TessalatePolygon(
-            &render_data->multi_polygon_triangles,
+            &render_data->polygon_triangles,
             (Coord2Slice){.v = vertices,
-                          .count = render_data->multi_polygon_coords.count -
+                          .count = render_data->polygon_coords.count -
                                    first_coordinate_idx},
             S32SliceFromArray(&contour_sizes));
 #else
         JsonNode *contour_array = polygon->children.first;
-        ContourFromJsonArray(contour_array, &render_data->multi_polygon_coords);
+        ContourFromJsonArray(contour_array, &render_data->polygon_coords);
         S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
         // DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
         contour_array = contour_array->next;
@@ -848,13 +857,12 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
                  "invalid size for polygon contour: %d",
                  contour_array->children.count)
           S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
-          ContourFromJsonArray(contour_array,
-                               &render_data->multi_polygon_coords);
+          ContourFromJsonArray(contour_array, &render_data->polygon_coords);
           contour_array = contour_array->next;
         }
-        Earcut(&render_data->multi_polygon_triangles,
+        Earcut(&render_data->polygon_triangles,
                (Coord2Slice){.v = vertices,
-                             .count = render_data->multi_polygon_coords.count -
+                             .count = render_data->polygon_coords.count -
                                       first_coordinate_idx},
                S32SliceFromArray(&contour_sizes));
 
@@ -863,28 +871,28 @@ GeoJson *serialize(Arena *arena, JsonNode *root) {
         // we need to fix the indices as they are local to a polygon, but they
         // now point into the global coordinate array.
         for (S32 j = first_triangle_idx;
-             j < render_data->multi_polygon_triangles.count; j++) {
-          Triangle *triangle = &render_data->multi_polygon_triangles.d[j];
+             j < render_data->polygon_triangles.count; j++) {
+          Triangle *triangle = &render_data->polygon_triangles.d[j];
           triangle->a += first_coordinate_idx;
           triangle->b += first_coordinate_idx;
           triangle->c += first_coordinate_idx;
           ASSERT(triangle->a > first_coordinate_idx &&
-                     triangle->a < render_data->multi_polygon_coords.count,
+                     triangle->a < render_data->polygon_coords.count,
                  "multi polygon index for a out of range, should be inside "
                  "(%d-%d), was: %d",
-                 first_coordinate_idx, render_data->multi_polygon_coords.count,
+                 first_coordinate_idx, render_data->polygon_coords.count,
                  triangle->a);
           ASSERT(triangle->b > first_coordinate_idx &&
-                     triangle->b < render_data->multi_polygon_coords.count,
+                     triangle->b < render_data->polygon_coords.count,
                  "multi polygon index for b out of range, should be inside "
                  "(%d-%d), was: %d",
-                 first_coordinate_idx, render_data->multi_polygon_coords.count,
+                 first_coordinate_idx, render_data->polygon_coords.count,
                  triangle->b);
           ASSERT(triangle->c > first_coordinate_idx &&
-                     triangle->c < render_data->multi_polygon_coords.count,
+                     triangle->c < render_data->polygon_coords.count,
                  "multi polygon index for c out of range, should be inside "
                  "(%d-%d), was: %d",
-                 first_coordinate_idx, render_data->multi_polygon_coords.count,
+                 first_coordinate_idx, render_data->polygon_coords.count,
                  triangle->c);
         }
         polygon = polygon->next;
@@ -976,57 +984,101 @@ void draw_multi_line_strings(GeoJson *coords, Camera2D camera) {
   (void)camera;
 }
 
-static inline void DrawPolygonTriangle(Triangle t, Vector2 a, Vector2 b,
-                                       Vector2 c) {
-  // if (CROSS(a, b, c) > 0.01f) {
-  //   fprintf(stderr, "ERROR: Triangle %d -> %d -> %d, not counter
-  //   clockwise\n",
-  //           t.a, t.b, t.c);
-  // }
-  DrawTriangle(a, b, c, (Color){0, 0, 255, 100});
-  if (render_options.show_triangulation) {
-    DrawLineEx(a, b, 3, RED);
-    DrawLineEx(a, c, 3, RED);
-    DrawLineEx(b, c, 3, RED);
-  }
-  if (render_options.show_vertex_numbers) {
-    char buf[8] = {0};
-    sprintf(buf, "%d", t.a);
-    DrawText(buf, (int)a.x, (int)a.y, 50, RED);
-    sprintf(buf, "%d", t.b);
-    DrawText(buf, (int)b.x, (int)b.y, 50, RED);
-    sprintf(buf, "%d", t.c);
-    DrawText(buf, (int)c.x, (int)c.y, 50, RED);
-  }
-  // DEBUG_MSG("drawing triangle: [%03.05f, %03.05f][%03.05f,
-  // %03.05f][%03.05f, "
-  //"%03.05f]\n",
-  // a.x, a.y, b.x, b.y, c.x, c.y)
-}
-
-void DrawPolygons(const GeoJson *coords, Camera2D camera) {
-  // --------------------- POLYGONS ---------------------
-  TriangleArray triangles = coords->polygon_triangles;
-  Coord2Array p_coords = coords->polygon_coords;
-  for (S32 i = 0; i < triangles.count; i++) {
-    Triangle t = triangles.d[i];
-    Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(p_coords.d[t.a]), camera);
-    Vector2 b = GetWorldToScreen2D(Vector2FromCoord2(p_coords.d[t.b]), camera);
-    Vector2 c = GetWorldToScreen2D(Vector2FromCoord2(p_coords.d[t.c]), camera);
-    DrawPolygonTriangle(t, a, b, c);
+static inline void DrawPolygonTriangleWires(const GeoJson *coords,
+                                            Camera2D camera) {
+  if (render_options.show_triangulation || render_options.show_vertex_numbers) {
+    Coord2Array t_coords = coords->polygon_coords;
+    for (S32 i = 0; i < coords->polygon_triangles.count; i += 1) {
+      Triangle t = coords->polygon_triangles.d[i];
+      Vector2 a =
+          GetWorldToScreen2D(Vector2FromCoord2(t_coords.d[t.a]), camera);
+      Vector2 b =
+          GetWorldToScreen2D(Vector2FromCoord2(t_coords.d[t.b]), camera);
+      Vector2 c =
+          GetWorldToScreen2D(Vector2FromCoord2(t_coords.d[t.c]), camera);
+      if (render_options.show_triangulation) {
+        DrawLineEx(a, b, 3, RED);
+        DrawLineEx(a, c, 3, RED);
+        DrawLineEx(b, c, 3, RED);
+      }
+      if (render_options.show_vertex_numbers) {
+        char buf[8] = {0};
+        sprintf(buf, "%d", t.a);
+        DrawText(buf, (int)a.x, (int)a.y, 50, RED);
+        sprintf(buf, "%d", t.b);
+        DrawText(buf, (int)b.x, (int)b.y, 50, RED);
+        sprintf(buf, "%d", t.c);
+        DrawText(buf, (int)c.x, (int)c.y, 50, RED);
+      }
+    }
   }
 }
 
-void DrawMultiPolygons(const GeoJson *coords, Camera2D camera) {
-  // --------------------- MULTI POLYGONS ---------------------
-  const TriangleArray triangles = coords->multi_polygon_triangles;
-  const Coord2Array p_coords = coords->multi_polygon_coords;
-  for (S32 i = 0; i < triangles.count; i++) {
-    const Triangle t = triangles.d[i];
-    Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(p_coords.d[t.a]), camera);
-    Vector2 b = GetWorldToScreen2D(Vector2FromCoord2(p_coords.d[t.b]), camera);
-    Vector2 c = GetWorldToScreen2D(Vector2FromCoord2(p_coords.d[t.c]), camera);
-    DrawPolygonTriangle(t, a, b, c);
+Mesh MeshFromPolygons(Arena *arena, GeoJson *polygons) {
+
+  // create a big mesh (triangle soup) to avoid unsigned short limit for
+  // indicdes in openGL
+  S32 vertex_soup_count = polygons->polygon_triangles.count * 3;
+  Mesh mesh = {
+      .vertexCount = vertex_soup_count,
+      .vertices =
+          arena_alloc_array(arena, float, (size_t)vertex_soup_count * 3),
+      .triangleCount = polygons->polygon_triangles.count,
+  };
+  S32 v = 0;
+  Coord2 *coords = polygons->polygon_coords.d;
+
+  for (S32 i = 0; i < polygons->polygon_triangles.count; i++) {
+    Triangle t = polygons->polygon_triangles.d[i];
+    mesh.vertices[v++] = (float)coords[t.a].x;
+    mesh.vertices[v++] = -(float)coords[t.a].y;
+    mesh.vertices[v++] = 0.f;
+    mesh.vertices[v++] = (float)coords[t.b].x;
+    mesh.vertices[v++] = -(float)coords[t.b].y;
+    mesh.vertices[v++] = 0.f;
+    mesh.vertices[v++] = (float)coords[t.c].x;
+    mesh.vertices[v++] = -(float)coords[t.c].y;
+    mesh.vertices[v++] = 0.f;
+  }
+  return mesh;
+}
+
+void UpdateCameraPos(Camera2D *camera, Screen screen) {
+  // Translate based on mouse right click
+  if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+    Vector2 delta = GetMouseDelta();
+    delta = Vector2Scale(delta, -1.0f / camera->zoom);
+    camera->target = Vector2Add(camera->target, delta);
+  }
+
+  // Zoom based on mouse wheel
+  F32 wheel = GetMouseWheelMove();
+  if (wheel != 0) {
+    // Get the world point that is under the mouse
+    Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), *camera);
+
+    // Set the offset to where the mouse is
+    camera->offset = GetMousePosition();
+
+    // Set the target to match, so that the camera maps the world space
+    // point under the cursor to the screen space point under the cursor at
+    // any zoom
+    camera->target = mouseWorldPos;
+
+    // Zoom increment
+    // Uses log scaling to provide consistent zoom speed
+    F32 scale = 0.2f * wheel;
+    camera->zoom = Clamp(expf(logf(camera->zoom) + scale), 0.001f, 1000000.0f);
+  }
+
+  // Camera reset (zoom and rotation)
+  if (IsKeyPressed(KEY_R)) {
+    camera->zoom = 4.0f;
+    camera->rotation = 0.0f;
+    camera->offset =
+        (Vector2){(float)screen.width / 2.0f, (float)screen.height / 2.0f};
+    camera->target.x = 0;
+    camera->target.y = 0;
   }
 }
 
@@ -1064,37 +1116,24 @@ int main(int argc, char **argv) {
   //--------------------------------------------------------------------------------------
   // Initialization
   //--------------------------------------------------------------------------------------
-  const int screenWidth = 1920;
-  const int screenHeight = 1080;
+  const Screen screen = {.width = 1920, .height = 1080};
 
-  InitWindow(screenWidth, screenHeight, "Map Renderer");
+  InitWindow(screen.width, screen.height, "Map Renderer");
   SetTargetFPS(60);
 
   Camera2D camera = {
-      .offset = {(float)screenWidth / 2.0f, (float)screenHeight / 2.0f},
+      .offset = {(float)screen.width / 2.0f, (float)screen.height / 2.0f},
       .rotation = 0.0f,
       .zoom = 4.0f,
       .target = {0, 0}};
 
-  //{
-  //  LineStringArray lines = serialized_coords->line_strings;
-  //  Coord2Array l_coords = serialized_coords->line_string_coords;
-  //  for (S32 i = 0; i < lines.count; i++) {
-  //    const S32 start_index = lines.d[i].coordinates.start;
-  //    const S32 length = lines.d[i].coordinates.length;
-  //    for (S32 j = 0; j < length - 1; j++) {
-  //      DEBUG_MSG("line: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n",
-  //                l_coords.d[start_index + j].x * ((F64)screenWidth / 180.0),
-  //                (F32)(l_coords.d[start_index + j].y) *
-  //                    ((F64)screenHeight / 90.0),
-  //                (F32)(l_coords.d[start_index + j + 1].x *
-  //                      ((F64)screenWidth / 180.0)),
-  //                (F32)(l_coords.d[start_index + j + 1].y) *
-  //                    ((F64)screenHeight / 90.0))
-  //    }
-  //  }
-  //}
-  // Main game loop
+  // create a big mesh (triangle soup) to avoid unsigned short limit for
+  // indicdes in openGL
+  Mesh mesh = MeshFromPolygons(arena, serialized_coords);
+  UploadMesh(&mesh, false);
+  Material material = LoadMaterialDefault();
+  material.maps[MATERIAL_MAP_DIFFUSE].color = BLUE;
+
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
     // Update
@@ -1109,56 +1148,26 @@ int main(int argc, char **argv) {
     if (IsKeyReleased(KEY_N))
       render_options.show_vertex_numbers ^= true;
 
-    // Translate based on mouse right click
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-      Vector2 delta = GetMouseDelta();
-      delta = Vector2Scale(delta, -1.0f / camera.zoom);
-      camera.target = Vector2Add(camera.target, delta);
-    }
+    UpdateCameraPos(&camera, screen);
 
-    // Zoom based on mouse wheel
-    F32 wheel = GetMouseWheelMove();
-    if (wheel != 0) {
-      // Get the world point that is under the mouse
-      Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
-
-      // Set the offset to where the mouse is
-      camera.offset = GetMousePosition();
-
-      // Set the target to match, so that the camera maps the world space
-      // point under the cursor to the screen space point under the cursor at
-      // any zoom
-      camera.target = mouseWorldPos;
-
-      // Zoom increment
-      // Uses log scaling to provide consistent zoom speed
-      F32 scale = 0.2f * wheel;
-      camera.zoom = Clamp(expf(logf(camera.zoom) + scale), 0.001f, 1000000.0f);
-    }
-
-    // Camera reset (zoom and rotation)
-    if (IsKeyPressed(KEY_R)) {
-      camera.zoom = 4.0f;
-      camera.rotation = 0.0f;
-      camera.offset =
-          (Vector2){(float)screenWidth / 2.0f, (float)screenHeight / 2.0f};
-      camera.target.x = 0;
-      camera.target.y = 0;
-    }
     //----------------------------------------------------------------------------------
-
     // Draw
     //----------------------------------------------------------------------------------
     BeginDrawing();
 
     ClearBackground(RAYWHITE);
 
+    BeginMode2D(camera);
+    {
+      DrawMesh(mesh, material, MatrixIdentity());
+    }
+    EndMode2D();
+
     draw_points(serialized_coords, camera);
     draw_multi_points(serialized_coords, camera);
     draw_line_strings(serialized_coords, camera);
     draw_multi_line_strings(serialized_coords, camera);
-    DrawPolygons(serialized_coords, camera);
-    DrawMultiPolygons(serialized_coords, camera);
+    DrawPolygonTriangleWires(serialized_coords, camera);
 
     // --------------------- HUD -------------------------
     DrawText(TextFormat("CURRENT ZOOM: %03.04f", camera.zoom), 640, 10, 20,
@@ -1171,10 +1180,9 @@ int main(int argc, char **argv) {
     DrawText(TextFormat("MOUSE POS : [%03.04f, %03.04f]", mouseWorldPos.x,
                         mouseWorldPos.y),
              100, 10, 20, RED);
-    DrawText(TextFormat("Triangles (Poly):\t\t%d\nTriangles (M-Poly)\t\t%d",
-                        serialized_coords->polygon_triangles.count,
-                        serialized_coords->multi_polygon_triangles.count),
-             100, 40, 20, RED);
+    DrawText(
+        TextFormat("Triangles: %d", serialized_coords->polygon_triangles.count),
+        100, 40, 20, RED);
 
     EndDrawing();
     //----------------------------------------------------------------------------------

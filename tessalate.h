@@ -92,15 +92,10 @@ enum MonotoneBaseSide {
   BASE_RIGHT,
 };
 
-#define TRIANGULATE_INFINITY (1 << 30)
 #define COORD2_MINUS_INFINITY                                                  \
-  (Coord2) {                                                                   \
-    .x = -1.f * TRIANGULATE_INFINITY, .y = -1.f * TRIANGULATE_INFINITY         \
-  }
+  (Coord2) { .x = min_F64, .y = min_F64 }
 #define COORD2_PLUS_INFINITY                                                   \
-  (Coord2) { .x = TRIANGULATE_INFINITY, .y = TRIANGULATE_INFINITY }
-#define C_EPS 1.11e-16
-#define FP_EQUAL(s, t) (fabs((s) - (t)) <= C_EPS)
+  (Coord2) { .x = max_F64, .y = max_F64 }
 
 static void GeneratePermutation(S32Array *permutation);
 static S32 RandomSegment(S32Array *permutation);
@@ -1052,10 +1047,10 @@ static S32 SplitPolygonByDiagonal(VertexChainSlice vertex_chains,
       vertex_chains, MonotoneChainSliceFromArray(monotone_polygon_chains),
       S32SliceFromArray(monotone_chain_start_vertex));
 
-    S32 polygon_length_p =
-        PolygonLength(MonotoneChainSliceFromArray(monotone_polygon_chains), p);
-    S32 polygon_length_i =
-        PolygonLength(MonotoneChainSliceFromArray(monotone_polygon_chains), i);
+  S32 polygon_length_p =
+      PolygonLength(MonotoneChainSliceFromArray(monotone_polygon_chains), p);
+  S32 polygon_length_i =
+      PolygonLength(MonotoneChainSliceFromArray(monotone_polygon_chains), i);
   if (polygon_length_p != polygon_length_i) {
     ASSERT(polygon_length_p + polygon_length_i == polygon_length_prev + 2,
            "Polygon length of %d and %d do not match previous length %d + %d "

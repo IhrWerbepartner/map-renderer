@@ -60,6 +60,8 @@ typedef double F64;
 //
 global F64 max_F64 = (F64)DBL_MAX;
 global F64 min_F64 = -(F64)DBL_MAX;
+#define C_EPS 1.11e-16
+#define FP_EQUAL(s, t) (fabs((s) - (t)) <= C_EPS)
 
 #define KB(n) (((U64)(n)) << 10)
 #define MB(n) (((U64)(n)) << 20)

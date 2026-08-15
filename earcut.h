@@ -8,8 +8,8 @@
 
 // TODO: figure out invariants to put as validation functions.
 
-typedef struct Polygon Polygon;
-struct Polygon {
+typedef struct EarcutPolygon EarcutPolygon;
+struct EarcutPolygon {
   Coord2Slice coords;
   RangeSlice contours;
 };
@@ -101,7 +101,7 @@ internal void SplitEarcut(NodeArray *nodes, ZOrderInfo bounds, S32 start,
                           TriangleArray *triangles);
 static F64 Area(NodeSlice nodes, S32 p, S32 q, S32 r);
 
-static S32 eliminateHoles(Polygon polygon, NodeArray *nodes, S32 outerNode);
+static S32 eliminateHoles(EarcutPolygon polygon, NodeArray *nodes, S32 outerNode);
 static S32 eliminateHole(BlockBoundingBoxArray *blocks, S32Array *block_head,
                          S32Array *block_stop, NodeArray *nodes, S32 hole,
                          S32 outerNode);
@@ -560,7 +560,7 @@ static S32 hole_queue_comparator(const void *_a, const void *_b, void *_nodes) {
 // link every hole into the outer loop, producing a single-ring polygon without
 // holes
 
-S32 eliminateHoles(const Polygon polygon, NodeArray *nodes, S32 outerNode) {
+S32 eliminateHoles(const EarcutPolygon polygon, NodeArray *nodes, S32 outerNode) {
 
   const Temp_Arena_Memory scratch = GetScratch();
   S32Array hole_queue =
@@ -1253,7 +1253,7 @@ void Earcut(TriangleArray *triangles, const Coord2Slice coords,
     coords_so_far += contour_sizes.v[i];
   }
 
-  Polygon polygon = {.coords = coords,
+  EarcutPolygon polygon = {.coords = coords,
                      .contours = RangeSliceFromArray(&contours)};
 
   S32 outerNode = LinkedList(&nodes, coords, polygon.contours.v[0], true);
