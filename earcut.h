@@ -1225,6 +1225,8 @@ void RemoveNodeAndUpdateIndex(NodeSlice nodes, BlockBoundingBoxSlice blocks,
 #endif
 }
 
+// TODO: implement a fast path for Polygons with no holes and 4 Vertices.
+// Simply return [{1, 2, 3}, {1, 3, 4}].
 void Earcut(TriangleArray *triangles, const Coord2Slice coords,
             const S32Slice contour_sizes) {
   {

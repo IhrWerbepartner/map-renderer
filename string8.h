@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base.h"
+#include "fixed-array.c"
 
 typedef struct String8 String8;
 struct String8 {
@@ -51,3 +52,4 @@ static S8 string8_compare(String8 a, String8 b) {
 }
 
 static S8 String8Equals(String8 a, String8 b) { return string8_compare(a, b) == 0; }
+DeclFixedArray(String8Array, String8);
