@@ -2,6 +2,7 @@
 
 #include "base.h"
 #include "fixed-array.c"
+#include <stdbool.h>
 
 typedef struct String8 String8;
 struct String8 {
@@ -51,5 +52,17 @@ static S8 string8_compare(String8 a, String8 b) {
   return 0;
 }
 
-static S8 String8Equals(String8 a, String8 b) { return string8_compare(a, b) == 0; }
+static S8 String8Equals(String8 a, String8 b) {
+  return string8_compare(a, b) == 0;
+}
+
+static bool String8EndsWith(String8 string, String8 postfix) {
+  if (string.len > postfix.len) {
+    return false;
+  }
+  return string8_compare((String8){.buf = string.buf + string.len - postfix.len,
+                                   .len = postfix.len},
+                         postfix) == 0;
+}
+
 DeclFixedArray(String8Array, String8);

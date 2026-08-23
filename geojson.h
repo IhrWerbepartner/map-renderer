@@ -15,9 +15,9 @@
 #define SEIDEL_TRIANGULATION 0
 
 #if SEIDEL_TRIANGULATION
-#include "tessalate.h"
+#include "triangulate/tessalate.h"
 #else
-#include "earcut.h"
+#include "triangulate/earcut.h"
 #endif
 
 typedef struct geo_properties {
@@ -153,7 +153,7 @@ static Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
 // result array. Returns the index of the coordinate with the lowest y and
 // hightest x.
 static S32 ContourFromJsonArray(const JsonNode *coordinates,
-                         Coord2Array *result_array) {
+                                Coord2Array *result_array) {
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
   }
@@ -185,7 +185,8 @@ static S32 ContourFromJsonArray(const JsonNode *coordinates,
 
 // reverses the coordinates to make them counterclockwise if needed.
 // Returns true/false depending on if this function it did some operation.
-static bool MakeCoordinatesCounterClockwise(Coord2Slice coordinates, S32 min_index) {
+static bool MakeCoordinatesCounterClockwise(Coord2Slice coordinates,
+                                            S32 min_index) {
   ASSERT(min_index >= 0 && min_index < coordinates.count, "index out of range");
   if (CROSS(coordinates.v[min_index],
             coordinates
@@ -223,7 +224,7 @@ void ContourFromJsonArrayReversed(const JsonNode *coordinates,
 }
 
 static void Coord2ArrayFromJsonArray(const JsonNode *coordinates,
-                              Coord2Array *result_array) {
+                                     Coord2Array *result_array) {
 
   if (coordinates->type != JSON_ARRAY) {
     ERROR_MSG("invalid coordinates node type")
@@ -568,12 +569,17 @@ static GeoJson *geo_json_parse(Arena *arena, char *filepath) {
   return serialized;
 }
 
+// --------------------- DRAW FEATURES -------------------
+static inline Vector2 Vector2FromCoord2YFlipped(Coord2 coord) {
+  return (Vector2){.x = (F32)(coord).x, .y = -(F32)(coord).y};
+}
+
 static void draw_points(const GeoJson *coords, Camera2D camera) {
   // --------------------- POINTS -------------------
   PointArray i_pts = coords->interest_points;
   for (S32 i = 0; i < i_pts.count; i++) {
-    Vector2 a =
-        GetWorldToScreen2D(Vector2FromCoord2(i_pts.d[i].coordinates), camera);
+    Vector2 a = GetWorldToScreen2D(
+        Vector2FromCoord2YFlipped(i_pts.d[i].coordinates), camera);
     DrawCircleV(a, 5.0f, RED);
   }
 }
@@ -586,14 +592,14 @@ static void draw_multi_points(const GeoJson *coords, Camera2D camera) {
     const S32 length = points.d[i].coordinates.length;
     for (S32 j = 0; j < length; j++) {
       Vector2 a = GetWorldToScreen2D(
-          Vector2FromCoord2(m_coords.d[start_index + j]), camera);
+          Vector2FromCoord2YFlipped(m_coords.d[start_index + j]), camera);
       DrawCircleV(a, 5.0f, RED);
       // DEBUG("drawing: [%03.05f, %03.05f]\n", a.x, a.y)
     }
   }
 }
 static void draw_line_strings(const GeoJson *coords, Camera2D camera,
-                       GeoJsonRenderOptions render_options) {
+                              GeoJsonRenderOptions render_options) {
   // --------------------- LINE-STRINGS -------------------
   LineStringArray lines = coords->line_strings;
   Coord2Array l_coords = coords->line_string_coords;
@@ -602,9 +608,9 @@ static void draw_line_strings(const GeoJson *coords, Camera2D camera,
     const S32 length = lines.d[i].coordinates.length;
     for (S32 j = 0; j < length - 1; j++) {
       Vector2 a = GetWorldToScreen2D(
-          Vector2FromCoord2(l_coords.d[start_index + j]), camera);
+          Vector2FromCoord2YFlipped(l_coords.d[start_index + j]), camera);
       Vector2 b = GetWorldToScreen2D(
-          Vector2FromCoord2(l_coords.d[start_index + j + 1]), camera);
+          Vector2FromCoord2YFlipped(l_coords.d[start_index + j + 1]), camera);
       // TODO: add cohen-sutherland clipping here
       DrawLineEx(a, b, 5.0f, BLUE);
       // DEBUG("drawing: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n", a.x,
@@ -632,11 +638,11 @@ DrawPolygonTriangleWires(const GeoJson *coords, Camera2D camera,
     for (S32 i = 0; i < coords->polygon_triangles.count; i += 1) {
       Triangle t = coords->polygon_triangles.d[i];
       Vector2 a =
-          GetWorldToScreen2D(Vector2FromCoord2(t_coords.d[t.a]), camera);
+          GetWorldToScreen2D(Vector2FromCoord2YFlipped(t_coords.d[t.a]), camera);
       Vector2 b =
-          GetWorldToScreen2D(Vector2FromCoord2(t_coords.d[t.b]), camera);
+          GetWorldToScreen2D(Vector2FromCoord2YFlipped(t_coords.d[t.b]), camera);
       Vector2 c =
-          GetWorldToScreen2D(Vector2FromCoord2(t_coords.d[t.c]), camera);
+          GetWorldToScreen2D(Vector2FromCoord2YFlipped(t_coords.d[t.c]), camera);
       if (render_options.show_triangulation) {
         DrawLineEx(a, b, 3, RED);
         DrawLineEx(a, c, 3, RED);
