@@ -55,7 +55,7 @@ global const S32 max_S32 = (S32)0x7fffffff;
 // global S8 max_S8 = (S8)0x7f;
 //
 // global S64 min_S64 = (S64)0x8000000000000000ll;
-// global S32 min_S32 = (S32)0x80000000;
+global S32 min_S32 = (S32)0x80000000;
 // global S16 min_S16 = (S16)0x8000;
 // global S8 min_S8 = (S8)0x80;
 //
@@ -77,6 +77,12 @@ static S32 safe_cast_s32(S64 x) {
 static S32 safe_cast_s32_from_u64(U64 x) {
   assert(x <= (U32)max_S32);
   S32 result = (S32)x;
+  return result;
+}
+
+static U64 safe_cast_u64_from_s32(S32 x) {
+  assert(x >= 0);
+  U64 result = (U64)x;
   return result;
 }
 
@@ -183,7 +189,7 @@ global const U32 bit28 = (1<<27);
 global const U32 bit29 = (1<<28);
 global const U32 bit30 = (1<<29);
 global const U32 bit31 = (1<<30);
-global const U32 bit32 = (1<<31);
+global const U32 bit32 = (1u<<31u);
 
 global const U64 bit33 = (1ull<<32);
 global const U64 bit34 = (1ull<<33);
@@ -218,6 +224,14 @@ global const U64 bit62 = (1ull<<61);
 global const U64 bit63 = (1ull<<62);
 global const U64 bit64 = (1ull<<63);
 
+#define radians_from_turns_f64(v) ((v)*(2*3.1415926535897))
+#define turns_from_radians_f64(v) ((v)/(2*3.1415926535897))
+#define degrees_from_turns_f64(v) ((v)*360.0)
+#define turns_from_degrees_f64(v) ((v)/360.0)
+#define degrees_from_radians_f64(v) (degrees_from_turns_f64(turns_from_radians_f64(v)))
+#define radians_from_degrees_f64(v) (radians_from_turns_f64(turns_from_degrees_f64(v)))
+#define tan_f64(v)    tan(radians_from_turns_f64(v))
+
 #define C_EPS 1.11e-16
 #define FP_EQUAL(s, t) (fabs((s) - (t)) <= C_EPS)
 
@@ -233,7 +247,7 @@ global const U64 bit64 = (1ull<<63);
 #define Max(A, B) (((A) > (B)) ? (A) : (B))
 #define ClampTop(A, X) Min(A, X)
 #define ClampBot(X, B) Max(X, B)
-// #define Clamp(A, X, B) (((X) < (A)) ? (A) : ((X) > (B)) ? (B) : (X))
+#define ClampTB(A, X, B) (((X) < (A)) ? (A) : ((X) > (B)) ? (B) : (X))
 
 #define Swap(T, a, b)                                                          \
   do {                                                                         \

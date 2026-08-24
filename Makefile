@@ -1,7 +1,7 @@
 GEO_FILE=./samples/poly_test_2.json
-EXE_NAME= build/map-renderer
-EXE_NAME_UNOPTIMIZED= build/unoptimized-map-renderer
-CFLAGS= -Wextra -Wall -Wundef -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-enum -Werror=switch -Wconversion -DRAYMATH_USE_SIMD_INTRINSICS -march=native
+EXE_NAME= map-renderer
+EXE_NAME_UNOPTIMIZED= unoptimized-map-renderer
+CFLAGS= -Wextra -Wall -Wundef -Wno-unused-function -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-enum -Werror=switch -Wconversion -DRAYMATH_USE_SIMD_INTRINSICS -march=native
 
 SOURCE_FILES= map_renderer.c arena.c base.h triangulate/earcut.h json_parser.h string8.h vtpk/vtpk.h vtpk/vtpk_reader.h
 
@@ -20,7 +20,7 @@ map-renderer: $(SOURCE_FILES)
 	gcc $(CFLAGS) $(executable) $(LDFLAGS) -g map_renderer.c -o $(EXE_NAME) -O2
 
 unoptimized: $(SOURCE_FILES)
-	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g geojson-parser.c -o $(EXE_NAME_UNOPTIMIZED)
+	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g map_renderer.c -o $(EXE_NAME_UNOPTIMIZED)
 
 debug: unoptimized
 	gf2 $(EXE_NAME_UNOPTIMIZED)

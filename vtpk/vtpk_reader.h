@@ -6,7 +6,6 @@
 #include "../json_parser.h"
 #include "../string8.h"
 #include "../vendor/miniz.c"
-#include "../vendor/miniz.h"
 #include "mvt.h"
 #include <assert.h>
 #include <raylib.h>
@@ -68,9 +67,10 @@ struct TileIndexRecord {
 };
 
 TileIndexRecord TileIndexRecordFromIndex(U64 index) {
+    const U8 gzip_header_size = 10;
     return (TileIndexRecord){
-        .tile_offset = index & bitmask40,
-        .tile_size = index >> 40,
+        .tile_offset = (index & bitmask40) + gzip_header_size,
+        .tile_size = safe_cast_u32(index >> 40) - gzip_header_size,
     };
 }
 typedef struct TileBundleFileHeader TileBundleFileHeader;
@@ -123,21 +123,25 @@ static unsigned char gpu_data_arena_level13to15_buf[MB(100)] = {0};
 static unsigned char gpu_data_arena_level16_buf[MB(100)] = {0};
 
 static Arena gpu_data_arena_level0to7 =
-    (Arena){gpu_data_arena_level0to7_buf, sizeof(gpu_data_arena_level0to7_buf)};
+    (Arena){gpu_data_arena_level0to7_buf, sizeof(gpu_data_arena_level0to7_buf), 0, 0};
 static Arena gpu_data_arena_level8to12 =
-    (Arena){gpu_data_arena_level8to12_buf, sizeof(gpu_data_arena_level8to12_buf)};
+    (Arena){gpu_data_arena_level8to12_buf, sizeof(gpu_data_arena_level8to12_buf), 0, 0};
 static Arena gpu_data_arena_level13to15 =
-    (Arena){gpu_data_arena_level13to15_buf, sizeof(gpu_data_arena_level13to15_buf)};
+    (Arena){gpu_data_arena_level13to15_buf, sizeof(gpu_data_arena_level13to15_buf), 0, 0};
 static Arena gpu_data_arena_level16 =
-    (Arena){gpu_data_arena_level16_buf, sizeof(gpu_data_arena_level16_buf)};
+    (Arena){gpu_data_arena_level16_buf, sizeof(gpu_data_arena_level16_buf), 0, 0};
 
-static void OpenZipArchive(mz_zip_archive *archive, char *filepath) {
+static void OpenZipArchive(mz_zip_archive *archive, const char *filepath) {
+    assert(archive->m_last_error == MZ_ZIP_NO_ERROR);
     if (!(mz_zip_reader_init_file(archive, filepath, 0))) {
-        ERROR_MSG("can not open zip archive");
+        // ERROR_MSG("can not open zip archive\n");
+        ERROR_MSG("can not open zip archive: '%s'\n",
+                  mz_zip_get_error_string(archive->m_last_error));
     }
+    assert(archive->m_last_error == MZ_ZIP_NO_ERROR);
 }
 
-static U64 UncompressedFileSize(mz_zip_archive *archive, S32 file_index) {
+static U64 UncompressedFileSize(mz_zip_archive *archive, U32 file_index) {
     mz_zip_archive_file_stat stat = {0};
     if (!mz_zip_reader_file_stat(archive, file_index, &stat)) {
         ERROR_MSG("can not read stats for file '%d'", file_index);
@@ -145,7 +149,7 @@ static U64 UncompressedFileSize(mz_zip_archive *archive, S32 file_index) {
     return stat.m_uncomp_size;
 }
 
-static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, JsonNode *node, S32 x,
+static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, const JsonNode *node, S32 x,
                                 S32 y, S32 level) {
     assert(node != NULL);
     switch (node->type) {
@@ -183,12 +187,17 @@ static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, JsonNode *node, S3
                                .coordinate = (VectorTileCoordinate){x, y, level}};
         return node_index;
     }
+    case JSON_NULL:
+    case JSON_BOOL:
+    case JSON_OBJECT:
+    case JSON_DOUBLE:
+    case JSON_STRING:
     default:
         ERROR_MSG("invalid json node type");
     }
 }
 
-static S32 FileIndexFromFileName(mz_zip_archive *archive, const char *filename) {
+static U32 FileIndexFromFileName(mz_zip_archive *archive, const char *filename) {
     assert(archive != NULL);
     assert(filename != NULL);
     S32 file_index = mz_zip_reader_locate_file(archive, filename, NULL, 0);
@@ -196,27 +205,32 @@ static S32 FileIndexFromFileName(mz_zip_archive *archive, const char *filename) 
         ERROR_MSG("file '%s' not found in archive", filename);
     }
     assert(file_index >= 0);
-    return file_index;
+    return (U32)file_index;
 }
 
 static void QuadTreeFromJson(Arena *arena, VtpkFile *vtpk_file) {
     const char *tilemap = "p12/tilemap/root.json";
-    S32 file_index = FileIndexFromFileName(vtpk_file->archive, tilemap);
-    U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
+    const U32 file_index = FileIndexFromFileName(vtpk_file->archive, tilemap);
+    const U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
 
     // zero (sentinel value) first index
     vtpk_file->quad_tree =
-        QuadTreeNodeArrayNew(arena, safe_cast_s32_from_u64(file_size) / 4);
+        QuadTreeNodeArrayNew(arena, safe_cast_s32_from_u64(file_size) / 2);
     QuadTreeNodeArrayPush(&vtpk_file->quad_tree, (QuadTreeNode){0});
 
     Temp_Arena_Memory json_scratch = temp_arena_memory_begin(arena);
     char *file_content = arena_alloc(json_scratch.arena, file_size + 1);
     mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
                                  file_size + 1, 0);
+    assert(vtpk_file->archive->m_last_error == MZ_ZIP_NO_ERROR);
 
     JsonNode root = {0};
-    parse_value(arena, &root, (String8){0}, file_content);
-    JsonNode *tree_root = find_key_in_children(&root, String8FromCString("index"));
+    JsonParseValue(json_scratch.arena, &root, (String8){0}, file_content);
+    assert(root.type == JSON_NULL);
+    // get root object (second node in parsed json)
+    root = *root.children.first;
+    assert(root.type == JSON_OBJECT);
+    const JsonNode *tree_root = find_key_in_children(&root, String8FromCString("index"));
     vtpk_file->root_node =
         QuadTreeNodeFromJson(&vtpk_file->quad_tree, tree_root, 0, 0, 0);
 
@@ -226,12 +240,18 @@ static void QuadTreeFromJson(Arena *arena, VtpkFile *vtpk_file) {
 static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     Temp_Arena_Memory json_scratch = GetScratchConflict(&arena, 1);
     const char *root_properties = "p12/root.json";
-    S32 file_index = FileIndexFromFileName(vtpk_file->archive, root_properties);
+    U32 file_index = FileIndexFromFileName(vtpk_file->archive, root_properties);
     U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
     char *file_content = arena_alloc(json_scratch.arena, file_size + 1);
+    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
+                                 file_size + 1, 0);
 
     JsonNode root = {0};
-    parse_value(arena, &root, (String8){0}, file_content);
+    JsonParseValue(arena, &root, (String8){0}, file_content);
+    assert(root.type == JSON_NULL);
+    // get root object (second node in parsed json)
+    root = *root.children.first;
+    assert(root.type == JSON_OBJECT);
     const JsonNode *tile_info =
         find_key_in_children(&root, String8FromCString("tileInfo"));
     {
@@ -286,8 +306,10 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     // TODO: figure out wich properties we actually need.
 }
 
-VtpkFile *VtpkParseFile(Arena *arena, char *filepath) {
+VtpkFile *VtpkParseFile(Arena *arena, const char *filepath) {
     VtpkFile *vtpk_file = arena_alloc(arena, sizeof(VtpkFile));
+    vtpk_file->archive = arena_alloc(arena, sizeof(mz_zip_archive));
+    mz_zip_zero_struct(vtpk_file->archive);
     OpenZipArchive(vtpk_file->archive, filepath);
     assert(vtpk_file->archive != NULL);
     {
@@ -357,48 +379,67 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
     Temp_Arena_Memory scratch = GetScratch();
     for (S32 i = 0; i < tile_indices.count; i += 1) {
         VectorTileHandle *tile = &file->quad_tree.d[tile_indices.v[i]].tile;
-        if (tile->status == DATA_PRESENT) {
-            continue;
-        }
+        assert(tile->status !=
+               DATA_PRESENT); // should not request a tile with already existing data
+
         const S32 tile_file_col = (tile->coordinate.x / 128) * 128;
         const S32 tile_file_row = (tile->coordinate.y / 128) * 128;
         char bundle_filename[40] = {0};
         const S32 filename_size = snprintf(
-            bundle_filename, sizeof(bundle_filename), "p12/tile/L%02d/R%04x/C%04x.bundle",
+            bundle_filename, sizeof(bundle_filename), "p12/tile/L%02d/R%04xC%04x.bundle",
             tile->coordinate.level, tile_file_row, tile_file_col);
-        assert(filename_size == 31);
-        const S32 file_index = FileIndexFromFileName(file->archive, bundle_filename);
+        assert(filename_size == 30);
+        const U32 file_index = FileIndexFromFileName(file->archive, bundle_filename);
         const U64 file_size = UncompressedFileSize(file->archive, file_index);
         unsigned char *file_content = arena_alloc(scratch.arena, file_size);
-        mz_zip_reader_extract_to_mem(file->archive, file_index, file_content, file_size,
-                                     0);
+        if (!mz_zip_reader_extract_to_mem(file->archive, file_index, file_content,
+                                          file_size, 0)) {
+            ERROR_MSG("can not open zip archive: '%s'\n",
+                      mz_zip_get_error_string(file->archive->m_last_error));
+        }
         const TileBundleFileHeader *header = (TileBundleFileHeader *)file_content;
         assert(header->version == 3);
-        assert(header->record_count == 16384);
-        assert(header->max_tile_size == 0);
+        // assert(header->record_count == 16384);TODO: figure out why this is wrong
+        // assert(header->max_tile_size == 0);
         assert(header->offset_byte_count == 5);
         assert(header->slack_space == 0);
-        assert(header->file_size == 0);
+        // assert(header->file_size == 0);
         assert(header->user_header_offset == 40);
         assert(header->user_header_size == 20 + 131072);
         assert(header->legacy1 == 3);
-        assert(header->legacy2 == 16);
+        // assert(header->legacy2 == 16);
         assert(header->legacy3 == 16384);
         assert(header->legacy4 == 5);
         assert(header->index_size == 131072);
-        // TODO: figure out how to index this? row major?
         const TileIndexRecord compressed_mvt = TileIndexRecordFromIndex(
-            header->tile_index[tile->coordinate.y % 128][tile->coordinate.x % 128]);
+            header->tile_index[tile->coordinate.x % 128][tile->coordinate.y % 128]);
 
-        const U32 uncompressed_tile_size =
-            file_content[compressed_mvt.tile_offset + compressed_mvt.tile_size - 4];
+        const U8 *uncompressed_tile_size_location =
+            file_content + compressed_mvt.tile_offset + compressed_mvt.tile_size - 4;
+        U32 uncompressed_tile_size = *(const U32 *)(uncompressed_tile_size_location);
         const MapboxVectorTileProtobufData mvt_protobuf = {
             .v = arena_alloc(scratch.arena, uncompressed_tile_size),
             .size = uncompressed_tile_size};
-        const U64 decompressed_size = tinfl_decompress_mem_to_mem(
-            mvt_protobuf.v, uncompressed_tile_size,
-            file_content + compressed_mvt.tile_offset, compressed_mvt.tile_size, 0);
-        assert(decompressed_size == uncompressed_tile_size);
+
+        mz_stream stream = {0};
+        stream.next_in = file_content + compressed_mvt.tile_offset;
+        stream.avail_in = compressed_mvt.tile_size;
+        stream.next_out = mvt_protobuf.v;
+        stream.avail_out = uncompressed_tile_size;
+
+        int err = mz_inflateInit2(&stream, -15);
+        if (err == MZ_OK) {
+            err = mz_inflate(&stream, MZ_FINISH);
+            mz_inflateEnd(&stream);
+            // mz_inflate with MZ_FINISH returns MZ_STREAM_END on successful completion
+            if (err == MZ_STREAM_END) {
+                err = MZ_OK;
+            }
+        }
+        if (!(err == MZ_OK)) {
+            ERROR_MSG("%s\n", mz_error(err));
+        }
+        assert(err == MZ_OK);
         Arena *gpu_data_arena = GpuDataArenaFromLevel(tile->coordinate.level);
         tile->gpu_data = ParseMapboxVectorTile(gpu_data_arena, mvt_protobuf);
         tile->status = DATA_PRESENT;

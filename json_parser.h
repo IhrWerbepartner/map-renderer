@@ -172,7 +172,7 @@ static char *parse_key(String8 *key, char *p) {
   return 0; // error
 }
 
-static char *parse_value(Arena *arena, JsonNode *parent, String8 key, char *p) {
+static char *JsonParseValue(Arena *arena, JsonNode *parent, String8 key, char *p) {
   JsonNode *js;
   while (1) {
     switch (*p) {
@@ -197,7 +197,7 @@ static char *parse_value(Arena *arena, JsonNode *parent, String8 key, char *p) {
           return 0; // error
         if (*p == '}')
           return p + 1; // end of object
-        p = parse_value(arena, js, new_key, p);
+        p = JsonParseValue(arena, js, new_key, p);
         if (!p)
           return 0; // error
       }
@@ -205,7 +205,7 @@ static char *parse_value(Arena *arena, JsonNode *parent, String8 key, char *p) {
       js = create_json(arena, JSON_ARRAY, key, parent);
       p++;
       while (1) {
-        p = parse_value(arena, js, (String8){0}, p);
+        p = JsonParseValue(arena, js, (String8){0}, p);
         if (!p)
           return 0; // error
         if (*p == ']')

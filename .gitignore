@@ -1,6 +1,11 @@
 perf.data
 perf.data.old
 debug.log
+samples/bmapv_vtpk_3857.vtpk
+samples/RhodeIsland.ldgeojson
+
+*.rdi
+*.hexproj
 
 map-renderer
 unoptimized-map-renderer

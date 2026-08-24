@@ -1,3 +1,8 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wcast-qual"
+
 #include "miniz.h"
 /**************************************************************************
  *
@@ -7920,3 +7925,5 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 #endif
 
 #endif /*#ifndef MINIZ_NO_ARCHIVE_APIS*/
+
+#pragma GCC diagnostic pop

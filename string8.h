@@ -57,7 +57,7 @@ static S8 String8Equals(String8 a, String8 b) {
 }
 
 static bool String8EndsWith(String8 string, String8 postfix) {
-  if (string.len > postfix.len) {
+  if (string.len < postfix.len) {
     return false;
   }
   return string8_compare((String8){.buf = string.buf + string.len - postfix.len,
