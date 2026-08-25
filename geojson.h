@@ -2,7 +2,7 @@
 #include "base.h"
 #include "fixed-array.c"
 #include "json_parser.h"
-#include "raymath.h"
+#include "vendor/raymath.h"
 #include "string8.h"
 #include <assert.h>
 #include <math.h>

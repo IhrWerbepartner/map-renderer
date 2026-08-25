@@ -21,10 +21,10 @@ DeclFixedArray(RenderTexture2DArray, RenderTexture2D);
 // https://github.com/mapbox/vector-tile-spec/tree/master/2.1
 typedef enum GeometryType GeometryType;
 enum GeometryType {
-    UNKOWN = 0,
-    POINT = 1,
-    LINESTRING = 2,
-    POLYGON = 3,
+    GEOMETRY_TYPE_UNKOWN = 0,
+    GEOMETRY_TYPE_POINT = 1,
+    GEOMETRY_TYPE_LINESTRING = 2,
+    GEOMETRY_TYPE_POLYGON = 3,
 };
 
 typedef enum WindingOrder WindingOrder;
@@ -383,7 +383,7 @@ static void ProtobufParsePoint(const MapboxVectorTileProtobufData data,
 static void ProtobufParseFeature(MapboxVectorTileProtobufData data, LayerCoords *coords,
                                  U32 feature_size, U64 *ip) {
     U64 feature_end = *ip + feature_size;
-    GeometryType geometry_type = UNKOWN;
+    GeometryType geometry_type = GEOMETRY_TYPE_UNKOWN;
     Range geometry_range = {0};
     while (*ip < feature_end) {
         const U64 saved_ip = *ip;
@@ -417,15 +417,15 @@ static void ProtobufParseFeature(MapboxVectorTileProtobufData data, LayerCoords 
         assert(saved_ip < *ip); // ensure we are making progress
     }
     switch (geometry_type) {
-    case UNKOWN:
+    case GEOMETRY_TYPE_UNKOWN:
         ERROR_MSG("UNKNOWN geoemtry not supported")
-    case POINT:
+    case GEOMETRY_TYPE_POINT:
         ProtobufParsePoint(data, coords, geometry_range);
         break;
-    case LINESTRING:
+    case GEOMETRY_TYPE_LINESTRING:
         ProtobufParseLineString(data, coords, geometry_range);
         break;
-    case POLYGON:
+    case GEOMETRY_TYPE_POLYGON:
         ProtobufParsePolygon(data, coords, geometry_range);
         break;
     }
@@ -537,11 +537,11 @@ static void LayerMeshFromCoords(Arena *arena, MeshArray *meshes,
             triangle->a += start_index;
             triangle->b += start_index;
             triangle->c += start_index;
-            assert(triangle->a > start_index);
+            assert(triangle->a >= start_index);
             assert(triangle->a < layer_coords->mesh_coords.count);
-            assert(triangle->b > start_index);
+            assert(triangle->b >= start_index);
             assert(triangle->b < layer_coords->mesh_coords.count);
-            assert(triangle->c > start_index);
+            assert(triangle->c >= start_index);
             assert(triangle->c < layer_coords->mesh_coords.count);
         }
         S32ArrayReset(&contour_sizes);

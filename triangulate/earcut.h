@@ -603,7 +603,7 @@ S32 eliminateHoles(const EarcutPolygon polygon, NodeArray *nodes, S32 outerNode)
     // points coincide, the slope tiebreak makes the bridge land on the shared
     // vertex instead of bridging the wrong hole.
     ASSERT(hole_queue.count >= 0, "invalid count");
-    qsort_r(hole_queue.d, (size_t)hole_queue.count, sizeof(hole_queue.d[0]),
+    sort_r(hole_queue.d, (size_t)hole_queue.count, sizeof(hole_queue.d[0]),
             hole_queue_comparator, nodes->d);
 
     // upper bound: every input node indexed once, +2 bridge nodes per hole, plus
