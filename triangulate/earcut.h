@@ -1316,7 +1316,7 @@ void Earcut(TriangleArray *triangles, const Coord2Slice coords,
         coords_so_far += contour_sizes.v[i];
     }
 
-    EarcutPolygon polygon = {.coords = coords,
+    const EarcutPolygon polygon = {.coords = coords,
                              .contours = RangeSliceFromArray(&contours)};
 
     S32 outerNode = LinkedList(&nodes, coords, polygon.contours.v[0], true);

@@ -64,31 +64,31 @@ global const F64 min_F64 = -(F64)DBL_MAX;
 
 static U32 safe_cast_u32(U64 x) {
   assert(x <= max_U32);
-  U32 result = (U32)x;
+  const U32 result = (U32)x;
   return result;
 }
 
 static S32 safe_cast_s32(S64 x) {
   assert(x <= max_S32);
-  S32 result = (S32)x;
+  const S32 result = (S32)x;
   return result;
 }
 
 static S32 safe_cast_s32_from_u64(U64 x) {
   assert(x <= (U32)max_S32);
-  S32 result = (S32)x;
+  const S32 result = (S32)x;
   return result;
 }
 
 static U64 safe_cast_u64_from_s32(S32 x) {
   assert(x >= 0);
-  U64 result = (U64)x;
+  const U64 result = (U64)x;
   return result;
 }
 
 static S32 safe_cast_s32_from_u32(U32 x) {
   assert(x <= (U32)max_S32);
-  S32 result = (S32)x;
+  const S32 result = (S32)x;
   return result;
 }
 
