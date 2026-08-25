@@ -340,9 +340,6 @@ internal void EarcutLinked(NodeArray *nodes, ZOrderInfo bounds, S32 ear,
             (bounds.hashing ? IsEarHashed(node_slice, bounds, ear)
                             : IsEar(node_slice, ear))) {
             // cut off the triangle
-            ASSERT(node_slice.v[prev].vertex, "vertex prev is 0");
-            ASSERT(node_slice.v[ear].vertex, "vertex ear is 0");
-            ASSERT(node_slice.v[next].vertex, "vertex next is 0");
             TriangleArrayPush(triangles, (Triangle){.a = node_slice.v[prev].vertex,
                                                     .b = node_slice.v[ear].vertex,
                                                     .c = node_slice.v[next].vertex});
@@ -493,9 +490,6 @@ S32 cureLocalIntersections(NodeSlice nodes, S32 start, TriangleArray *triangles)
         // crossing
         if (intersects(nodes, a, p, nodes.v[p].next, b, false) &&
             locallyInside(nodes, a, b) && locallyInside(nodes, b, a)) {
-            ASSERT(nodes.v[a].vertex, "vertex a is 0");
-            ASSERT(nodes.v[p].vertex, "vertex p is 0");
-            ASSERT(nodes.v[b].vertex, "vertex b is 0");
             TriangleArrayPush(triangles, (Triangle){.a = nodes.v[a].vertex,
                                                     .b = nodes.v[p].vertex,
                                                     .c = nodes.v[b].vertex});
@@ -1204,7 +1198,6 @@ internal S32 insertNode(NodeArray *nodes, S32 vertex, const Coord2 pt, S32 last)
 #ifdef DEBUG
 #ifdef DEBUG_EARCUT
     ValidateNodeStructure(NodeSliceFromArray(nodes));
-    ASSERT(vertex, "can not create node with null vertex");
 #endif
 #endif
     S32 p = NodeArrayPush(nodes, (Node){.vertex = vertex, .x = pt.x, .y = pt.y});
@@ -1274,12 +1267,12 @@ void RemoveNodeAndUpdateIndex(NodeSlice nodes, BlockBoundingBoxSlice blocks, S32
 #endif
 }
 
-void Earcut(TriangleArray *triangles, const Coord2Slice coords,
+static void Earcut(TriangleArray *triangles, const Coord2Slice coords,
             const S32Slice contour_sizes) {
     {
-        ASSERT(coords.v[0].x == 0.f && coords.v[0].y == 0.f, "Coords[0] not zeroed")
-        ASSERT(coords.count > 3, "Can not triangulate polygon with < 3 coordinates")
-        S32 sum = 1; // account for zeroed element at coords[0].
+        //ASSERT(coords.v[0].x == 0.f && coords.v[0].y == 0.f, "Coords[0] not zeroed")
+        ASSERT(coords.count > 2, "Can not triangulate polygon with < 3 coordinates")
+        S32 sum = 0;
         for (S32 i = 0; i < contour_sizes.count; i += 1) {
             sum += contour_sizes.v[i];
         }
@@ -1292,11 +1285,11 @@ void Earcut(TriangleArray *triangles, const Coord2Slice coords,
     // Simply return [{1, 2, 3}, {1, 3, 4}].
     if (contour_sizes.count == 1 && contour_sizes.v[0] == 4) {
         if (isContourClockwise(coords)) {
-            TriangleArrayPush(triangles, (Triangle){1, 2, 3});
-            TriangleArrayPush(triangles, (Triangle){1, 3, 4});
+            TriangleArrayPush(triangles, (Triangle){0, 3, 2});
+            TriangleArrayPush(triangles, (Triangle){0, 2, 1});
         } else {
-            TriangleArrayPush(triangles, (Triangle){1, 4, 3});
-            TriangleArrayPush(triangles, (Triangle){1, 3, 2});
+            TriangleArrayPush(triangles, (Triangle){0, 1, 2});
+            TriangleArrayPush(triangles, (Triangle){0, 2, 3});
         }
         return;
     }
@@ -1309,7 +1302,7 @@ void Earcut(TriangleArray *triangles, const Coord2Slice coords,
     NodeArrayPush(&nodes, (Node){0});
 
     RangeArray contours = RangeArrayNew(scratch.arena, contour_sizes.count);
-    S32 coords_so_far = 1;
+    S32 coords_so_far = 0;
     for (S32 i = 0; i < contour_sizes.count; i += 1) {
         RangeArrayPush(&contours,
                        (Range){.min = coords_so_far, .count = contour_sizes.v[i]});
@@ -1617,10 +1610,7 @@ static void ValidateNodeStructure(NodeSlice nodes) {
     ASSERT(nodes.v[0].removed == false, "nodes[0] != 0");
     for (S32 i = 1; i < nodes.count; i += 1) {
         Node n = nodes.v[i];
-        if (n.vertex && !n.removed) {
-            // ASSERT(n.x != 0.f, "nodes[%d].x == 0", i);
-            // ASSERT(n.y != 0.f, "nodes[%d].y == 0", i);
-            ASSERT(n.vertex != 0, "nodes[%d].vertex == 0", i);
+        if (!n.removed) {
             const S32 prev = n.prev;
             const S32 next = n.next;
             ASSERT(nodes.v[prev].next == i, "invalid node information");
@@ -1630,9 +1620,9 @@ static void ValidateNodeStructure(NodeSlice nodes) {
 }
 
 static void ValidateZOrderCurve(NodeSlice nodes) {
-    for (S32 i = 0; i < nodes.count; i += 1) {
+    for (S32 i = 1; i < nodes.count; i += 1) {
         Node n = nodes.v[i];
-        if (n.vertex && n.z && !n.removed) {
+        if (n.z && !n.removed) {
             const S32 prevZ = n.prevZ;
             const S32 nextZ = n.nextZ;
             if (prevZ) {

@@ -355,10 +355,10 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             S32 first_coordinate_idx = render_data->polygon_coords.count;
             S32 first_triangle_idx = render_data->polygon_triangles.count;
 
-            // create emtpy slot at vertices[0] for triangulation
-            Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
 
 #if SEIDEL_TRIANGULATION
+            // create emtpy slot at vertices[0] for triangulation
+            Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
             JsonNode *contour_array = coordinates->children.first;
             if (contour_array == NULL || contour_array->children.count <= 1) {
                 ERROR_MSG("invalid size for polygon contour: %d",
@@ -419,11 +419,11 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                 triangle->a += first_coordinate_idx;
                 triangle->b += first_coordinate_idx;
                 triangle->c += first_coordinate_idx;
-                assert(triangle->a > first_coordinate_idx &&
-                       triangle->a < render_data->polygon_coords.count);
-                assert(triangle->b > first_coordinate_idx &&
-                       triangle->b < render_data->polygon_coords.count);
-                assert(triangle->c > first_coordinate_idx);
+                assert(triangle->a >= first_coordinate_idx);
+                assert(triangle->a < render_data->polygon_coords.count);
+                assert(triangle->b >= first_coordinate_idx);
+                assert(triangle->b < render_data->polygon_coords.count);
+                assert(triangle->c >= first_coordinate_idx);
                 assert(triangle->c < render_data->polygon_coords.count);
             }
 #if SEIDEL_TRIANGULATION
@@ -451,10 +451,10 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                 S32 first_coordinate_idx = render_data->polygon_coords.count;
                 S32 first_triangle_idx = render_data->polygon_triangles.count;
 
-                // create emtpy slot at vertices[0] for triangulation
-                Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
 
 #if SEIDEL_TRIANGULATION
+                // create emtpy slot at vertices[0] for triangulation
+                Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
                 JsonNode *contour_array = polygon->children.first;
                 const S32 min_coordinate_index =
                     ContourFromJsonArray(contour_array, &render_data->polygon_coords);
@@ -516,19 +516,19 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                     triangle->a += first_coordinate_idx;
                     triangle->b += first_coordinate_idx;
                     triangle->c += first_coordinate_idx;
-                    ASSERT(triangle->a > first_coordinate_idx &&
+                    ASSERT(triangle->a >= first_coordinate_idx &&
                                triangle->a < render_data->polygon_coords.count,
                            "multi polygon index for a out of range, should be inside "
                            "(%d-%d), was: %d",
                            first_coordinate_idx, render_data->polygon_coords.count,
                            triangle->a);
-                    ASSERT(triangle->b > first_coordinate_idx &&
+                    ASSERT(triangle->b >= first_coordinate_idx &&
                                triangle->b < render_data->polygon_coords.count,
                            "multi polygon index for b out of range, should be inside "
                            "(%d-%d), was: %d",
                            first_coordinate_idx, render_data->polygon_coords.count,
                            triangle->b);
-                    ASSERT(triangle->c > first_coordinate_idx &&
+                    ASSERT(triangle->c >= first_coordinate_idx &&
                                triangle->c < render_data->polygon_coords.count,
                            "multi polygon index for c out of range, should be inside "
                            "(%d-%d), was: %d",
