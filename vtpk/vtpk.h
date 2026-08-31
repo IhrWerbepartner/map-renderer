@@ -1,7 +1,6 @@
 #include "../arena.c"
 #include "../base.h"
 #include "../vendor/raymath.h"
-#include "raymath.h"
 #include "vtpk_reader.h"
 #include <assert.h>
 #include <math.h>

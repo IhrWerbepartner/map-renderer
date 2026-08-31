@@ -409,7 +409,9 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
 
         const U8 *uncompressed_tile_size_location =
             file_content + compressed_mvt.tile_offset + compressed_mvt.tile_size - 4;
-        U32 uncompressed_tile_size = *(const U32 *)(uncompressed_tile_size_location);
+        // read 4 bytes (maybe unaligned)
+        U32 uncompressed_tile_size;
+        memcpy(&uncompressed_tile_size, uncompressed_tile_size_location, sizeof(U32));
         const MVT_ProtobufData mvt_protobuf = {
             .v = arena_alloc(scratch.arena, uncompressed_tile_size),
             .size = uncompressed_tile_size};
