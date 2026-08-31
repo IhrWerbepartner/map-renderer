@@ -27,7 +27,7 @@ struct AABB {
 
 typedef struct VectorTileCoordinate VectorTileCoordinate;
 struct VectorTileCoordinate {
-    S32 x, y, level;
+    S32 row, col, level;
 };
 
 typedef enum VectorTileHandleStatus VectorTileHandleStatus;
@@ -91,14 +91,6 @@ struct TileBundleFileHeader {
     U64 tile_index[128][128]; // bits 0..39 represent offset, 40..63 the size
                               // (bytes) of a tile
 };
-
-/*
-typedef struct TileBundleFile TileBundleFile;
-struct TileBundleFile {
-  mz_ *file;
-  TileBundleFileHeader header;
-};
-*/
 
 typedef struct VtpkFileRootProperties VtpkFileRootProperties;
 struct VtpkFileRootProperties {
@@ -325,8 +317,8 @@ VtpkFile *VtpkParseFile(Arena *arena, const char *filepath) {
 
 // returns true if the bounding box contains or touches the coordinate
 static bool AABBContains(AABB bbox, VectorTileCoordinate coord) {
-    return bbox.min_x <= coord.x && bbox.max_x >= coord.x && bbox.min_y <= coord.y &&
-           bbox.max_y >= coord.y;
+    return bbox.min_x <= coord.col && bbox.max_x >= coord.col &&
+           bbox.min_y <= coord.row && bbox.max_y >= coord.row;
 }
 
 // writes all indices of nodes that intersect/touch the AABB with desired zoom
@@ -379,11 +371,12 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
     Temp_Arena_Memory scratch = GetScratch();
     for (S32 i = 0; i < tile_indices.count; i += 1) {
         VectorTileHandle *tile = &file->quad_tree.d[tile_indices.v[i]].tile;
-        assert(tile->status !=
-               DATA_PRESENT); // should not request a tile with already existing data
+        if (tile->status == DATA_PRESENT) {
+            continue;
+        }
 
-        const S32 tile_file_col = (tile->coordinate.x / 128) * 128;
-        const S32 tile_file_row = (tile->coordinate.y / 128) * 128;
+        const S32 tile_file_row = (tile->coordinate.row / 128) * 128;
+        const S32 tile_file_col = (tile->coordinate.col / 128) * 128;
         char bundle_filename[40] = {0};
         const S32 filename_size = snprintf(
             bundle_filename, sizeof(bundle_filename), "p12/tile/L%02d/R%04xC%04x.bundle",
@@ -412,12 +405,12 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         assert(header->legacy4 == 5);
         assert(header->index_size == 131072);
         const TileIndexRecord compressed_mvt = TileIndexRecordFromIndex(
-            header->tile_index[tile->coordinate.x % 128][tile->coordinate.y % 128]);
+            header->tile_index[tile->coordinate.row % 128][tile->coordinate.col % 128]);
 
         const U8 *uncompressed_tile_size_location =
             file_content + compressed_mvt.tile_offset + compressed_mvt.tile_size - 4;
         U32 uncompressed_tile_size = *(const U32 *)(uncompressed_tile_size_location);
-        const MapboxVectorTileProtobufData mvt_protobuf = {
+        const MVT_ProtobufData mvt_protobuf = {
             .v = arena_alloc(scratch.arena, uncompressed_tile_size),
             .size = uncompressed_tile_size};
 

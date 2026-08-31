@@ -5,12 +5,13 @@
 #include "../fixed-array.c"
 #include "../string8.h"
 #include "../triangulate/earcut.h"
+#include "../vendor/raymath.h"
 #include <assert.h>
 #include <raylib.h>
 #include <stdbool.h>
 
-typedef struct MapboxVectorTileProtobufData MapboxVectorTileProtobufData;
-struct MapboxVectorTileProtobufData {
+typedef struct MVT_ProtobufData MVT_ProtobufData;
+struct MVT_ProtobufData {
     U8 *v;
     U64 size;
 };
@@ -100,8 +101,8 @@ struct PlotterInstruction {
     PlotterCommand command;
 };
 
-typedef struct MapboxVectorTilePlotter MapboxVectorTilePlotter;
-struct MapboxVectorTilePlotter {
+typedef struct MVT_Plotter MVT_Plotter;
+struct MVT_Plotter {
     S32 pos_x, pos_y;
 };
 
@@ -114,8 +115,7 @@ static S32 ParameterIntegerFromZigzagInteger(U32 zigzag_value) {
     return (S32)((zigzag_value >> 1) ^ (-(zigzag_value & 1)));
 }
 
-static U64 DecodeVarInt128(const MapboxVectorTileProtobufData data, U32 allowed_bytes_read,
-                           U64 *ip) {
+static U64 DecodeVarInt128(const MVT_ProtobufData data, U32 allowed_bytes_read, U64 *ip) {
     U64 result = 0;
     S32 shift = 0;
     for (U32 i = 0; i < allowed_bytes_read; i += 1, shift += 7) {
@@ -128,15 +128,16 @@ static U64 DecodeVarInt128(const MapboxVectorTileProtobufData data, U32 allowed_
     ERROR_MSG("invalid VarInt128 detected");
 }
 
-static U64 U64FromVarInt128(MapboxVectorTileProtobufData data, U64 *ip) {
+static U64 U64FromVarInt128(MVT_ProtobufData data, U64 *ip) {
     return DecodeVarInt128(data, 10, ip);
 }
 
-static U32 U32FromVarInt128(MapboxVectorTileProtobufData data, U64 *ip) {
+static U32 U32FromVarInt128(MVT_ProtobufData data, U64 *ip) {
     return safe_cast_u32(DecodeVarInt128(data, 5, ip));
 }
 
-static PlotterInstruction PlotterInstructionFromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static PlotterInstruction PlotterInstructionFromProtobufData(MVT_ProtobufData data,
+                                                             U64 *ip) {
     const U32 command_integer = U32FromVarInt128(data, ip);
     return InstructionFromCommandInteger(command_integer);
 }
@@ -147,20 +148,20 @@ struct ProtobufTag {
     enum { VARINT = 0, I64 = 1, LEN = 2, SGROUP = 3, EGROUP = 4, I32 = 5 } wire_type;
 };
 
-static ProtobufTag TagFromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static ProtobufTag TagFromProtobufData(MVT_ProtobufData data, U64 *ip) {
     const U32 raw_bytes = U32FromVarInt128(data, ip);
     return (ProtobufTag){.field_number = raw_bytes >> 3,
                          .wire_type = raw_bytes & bitmask3};
 }
 
-static String8 String8FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static String8 String8FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     const U32 string_size = U32FromVarInt128(data, ip);
     const char *string_start = (const char *)data.v + *ip;
     *ip += string_size;
     return (String8){string_start, string_size};
 }
 
-static F64 F64FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static F64 F64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     F64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(F64));
@@ -168,7 +169,7 @@ static F64 F64FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
     return val;
 }
 
-static F32 F32FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static F32 F32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     F32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(F32));
@@ -176,7 +177,7 @@ static F32 F32FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
     return val;
 }
 
-static S64 S64FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static S64 S64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     S64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(S64));
@@ -184,7 +185,7 @@ static S64 S64FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
     return val;
 }
 
-static S32 S32FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static S32 S32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     S32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(S32));
@@ -192,7 +193,7 @@ static S32 S32FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
     return val;
 }
 
-static U32 U32FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static U32 U32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     U32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(U32));
@@ -200,7 +201,7 @@ static U32 U32FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
     return val;
 }
 
-static U64 U64FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
+static U64 U64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     U64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(U64));
@@ -208,7 +209,7 @@ static U64 U64FromProtobufData(MapboxVectorTileProtobufData data, U64 *ip) {
     return val;
 }
 
-static S32 LayerCount(const MapboxVectorTileProtobufData data) {
+static S32 LayerCount(const MVT_ProtobufData data) {
     U64 ip = 0;
     S32 count = 0;
     while (ip < data.size) {
@@ -220,18 +221,18 @@ static S32 LayerCount(const MapboxVectorTileProtobufData data) {
         assert(layer_length > 0);
         count += 1;
     }
+    assert(ip == data.size);
     return count;
 }
 
-static ProtobufValue ProtobufParseValue(MapboxVectorTileProtobufData data, U32 value_size,
-                                        U64 *ip) {
+static ProtobufValue ProtobufParseValue(MVT_ProtobufData data, U32 value_size, U64 *ip) {
     (void)data;
     *ip += value_size;
     // TODO: implement
     return (ProtobufValue){0};
 }
 
-static S32 ParameterFromProtobufData(const MapboxVectorTileProtobufData data, U64 *ip) {
+static S32 ParameterFromProtobufData(const MVT_ProtobufData data, U64 *ip) {
     return ParameterIntegerFromZigzagInteger(U32FromVarInt128(data, ip));
 }
 
@@ -253,33 +254,38 @@ static WindingOrder WindingOrderFromCoords(Coord2Slice coords) {
                : COUNTER_CLOCKWISE;
 }
 
-static void ProtobufParsePolygon(const MapboxVectorTileProtobufData data,
-                                 LayerCoords *coords, const Range geometry) {
-    MapboxVectorTilePlotter plotter = {0};
+static void PlotterReadParametersAndCreatePoint(MVT_ProtobufData data, U64 *ip,
+                                                MVT_Plotter *plotter,
+                                                Coord2Array *coords) {
+    plotter->pos_x += ParameterFromProtobufData(data, ip);
+    plotter->pos_y += ParameterFromProtobufData(data, ip);
+    Coord2ArrayPush(coords, (Coord2){.x = plotter->pos_x, .y = plotter->pos_y});
+}
+
+static void ProtobufParsePolygon(const MVT_ProtobufData data, LayerCoords *coords,
+                                 const Range geometry) {
+    MVT_Plotter plotter = {0};
     S32 polygon_ring_start = coords->polygons.count;
     S32 polygon_vertex_start = coords->mesh_coords.count;
-    for (U64 ip = (U64)geometry.min; ip < (U64)(geometry.min + geometry.count);) {
-        const PlotterInstruction instruction = PlotterInstructionFromProtobufData(data, &ip);
+    for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
+        const PlotterInstruction instruction =
+            PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
             assert(instruction.count == 1);
-            plotter.pos_x += ParameterFromProtobufData(data, &ip);
-            plotter.pos_y += ParameterFromProtobufData(data, &ip);
-            Coord2ArrayPush(&coords->mesh_coords,
-                            (Coord2){.x = plotter.pos_x, .y = plotter.pos_y});
+            PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
+                                                &coords->mesh_coords);
         } break;
         case LINE_TO: {
             assert(instruction.count > 1);
             for (U32 i = 0; i < instruction.count; i += 1) {
-                plotter.pos_x += ParameterFromProtobufData(data, &ip);
-                plotter.pos_y += ParameterFromProtobufData(data, &ip);
-                Coord2ArrayPush(&coords->mesh_coords,
-                                (Coord2){.x = plotter.pos_x, .y = plotter.pos_y});
+                PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
+                                                    &coords->mesh_coords);
             }
         } break;
         case CLOSE_PATH: {
-            // if we encounter a COUNTER_CLOCKWISE polygon and have encountered a polygon already
-            // append the previous to the multipolygon list.
+            // if we encounter a COUNTER_CLOCKWISE polygon and have encountered a polygon
+            // already append the previous to the multipolygon list.
             assert(instruction.count == 1);
             const WindingOrder winding = WindingOrderFromCoords(
                 Coord2SliceFromArrayStart(&coords->mesh_coords, polygon_vertex_start));
@@ -295,9 +301,9 @@ static void ProtobufParsePolygon(const MapboxVectorTileProtobufData data,
             case CLOCKWISE:
                 break;
             }
-            RangeArrayPush(
-                &coords->polygons,
-                (Range){polygon_vertex_start, coords->mesh_coords.count - polygon_vertex_start});
+            RangeArrayPush(&coords->polygons,
+                           (Range){polygon_vertex_start,
+                                   coords->mesh_coords.count - polygon_vertex_start});
             polygon_vertex_start = coords->mesh_coords.count;
         } break;
         }
@@ -307,22 +313,21 @@ static void ProtobufParsePolygon(const MapboxVectorTileProtobufData data,
         (Range){polygon_ring_start, coords->polygons.count - polygon_ring_start});
 }
 
-static void ProtobufParseLineString(const MapboxVectorTileProtobufData data,
-                                    LayerCoords *coords, const Range geometry) {
+static void ProtobufParseLineString(const MVT_ProtobufData data, LayerCoords *coords,
+                                    const Range geometry) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
-    MapboxVectorTilePlotter plotter = {0};
+    MVT_Plotter plotter = {0};
     S32 line_string_start = coords->texture_coords.count;
     const S32 multi_line_string_start = coords->line_strings.count;
-    for (U64 ip = (U64)geometry.min; ip < (U64)(geometry.min + geometry.count);) {
-        const PlotterInstruction instruction = PlotterInstructionFromProtobufData(data, &ip);
+    for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
+        const PlotterInstruction instruction =
+            PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
             assert(instruction.count == 1);
-            plotter.pos_x += ParameterFromProtobufData(data, &ip);
-            plotter.pos_y += ParameterFromProtobufData(data, &ip);
-            Coord2ArrayPush(&coords->texture_coords,
-                            (Coord2){.x = plotter.pos_x, .y = plotter.pos_y});
+            PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
+                                                &coords->texture_coords);
             if (coords->line_strings.count > multi_line_string_start) {
                 RangeArrayPush(&coords->line_strings,
                                (Range){line_string_start,
@@ -333,10 +338,8 @@ static void ProtobufParseLineString(const MapboxVectorTileProtobufData data,
         case LINE_TO: {
             assert(instruction.count > 0);
             for (U32 i = 0; i < instruction.count; i += 1) {
-                plotter.pos_x += ParameterFromProtobufData(data, &ip);
-                plotter.pos_y += ParameterFromProtobufData(data, &ip);
-                Coord2ArrayPush(&coords->texture_coords,
-                                (Coord2){.x = plotter.pos_x, .y = plotter.pos_y});
+                PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
+                                                    &coords->texture_coords);
             }
         } break;
         case CLOSE_PATH: {
@@ -349,22 +352,21 @@ static void ProtobufParseLineString(const MapboxVectorTileProtobufData data,
                            coords->line_strings.count - multi_line_string_start});
 }
 
-static void ProtobufParsePoint(const MapboxVectorTileProtobufData data,
-                               LayerCoords *coords, const Range geometry) {
+static void ProtobufParsePoint(const MVT_ProtobufData data, LayerCoords *coords,
+                               const Range geometry) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
-    MapboxVectorTilePlotter plotter = {0};
+    MVT_Plotter plotter = {0};
     const S32 point_start = coords->texture_coords.count;
-    for (U64 ip = (U64)geometry.min; ip < (U64)(geometry.min + geometry.count);) {
-        const PlotterInstruction instruction = PlotterInstructionFromProtobufData(data, &ip);
+    for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
+        const PlotterInstruction instruction =
+            PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
             assert(instruction.count > 0);
             for (U32 i = 0; i < instruction.count; i += 1) {
-                plotter.pos_x += ParameterFromProtobufData(data, &ip);
-                plotter.pos_y += ParameterFromProtobufData(data, &ip);
-                Coord2ArrayPush(&coords->texture_coords,
-                                (Coord2){.x = plotter.pos_x, .y = plotter.pos_y});
+                PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
+                                                    &coords->texture_coords);
             }
         } break;
         case LINE_TO: {
@@ -380,7 +382,7 @@ static void ProtobufParsePoint(const MapboxVectorTileProtobufData data,
 }
 // parses a Feature and writes the coords into the provided layercoords for
 // triangulation -> mesh/texture generation
-static void ProtobufParseFeature(MapboxVectorTileProtobufData data, LayerCoords *coords,
+static void ProtobufParseFeature(MVT_ProtobufData data, LayerCoords *coords,
                                  U32 feature_size, U64 *ip) {
     U64 feature_end = *ip + feature_size;
     GeometryType geometry_type = GEOMETRY_TYPE_UNKOWN;
@@ -393,24 +395,24 @@ static void ProtobufParseFeature(MapboxVectorTileProtobufData data, LayerCoords 
             // ID: skip for now (is optional anyway
             assert(feature_field.wire_type == VARINT);
             const U64 id = U64FromVarInt128(data, ip);
-           } break;
+        } break;
         case 2: {
             // TAGS: TODO skip for now
             assert(feature_field.wire_type == LEN);
             const U32 tags_size = U32FromVarInt128(data, ip);
             *ip += tags_size;
-            }break;
-        case 3:  {
+        } break;
+        case 3: {
             assert(feature_field.wire_type == VARINT);
             geometry_type = U32FromVarInt128(data, ip);
-            }break;
-        case 4:{
+        } break;
+        case 4: {
             assert(feature_field.wire_type == LEN);
             const U32 geometry_size = U32FromVarInt128(data, ip);
             geometry_range = (Range){.min = safe_cast_s32_from_u64(*ip),
                                      .count = safe_cast_s32_from_u32(geometry_size)};
             *ip += geometry_size;
-            }break;
+        } break;
         default:
             ERROR_MSG("invalid field number for feature: %d", feature_field.field_number);
         }
@@ -445,31 +447,32 @@ static LayerCoords *CreateNewLayer(Arena *arena, S32 layer_size) {
 }
 
 static void LayerTextureFromCoords(RenderTexture2DArray *textures,
-                                   LayerCoords *layer_coords) {
-    const S32 tile_extent = 512; // TODO: parse this from tile layer??
-    RenderTexture2D texture = LoadRenderTexture(tile_extent, tile_extent);
+                                   LayerCoords *layer_coords, U32 tile_extent) {
+    const S32 texture_size = 512;
+    const F32 scale_factor = (F32)texture_size / (F32)tile_extent;
+    RenderTexture2D texture = LoadRenderTexture(texture_size, texture_size);
     BeginTextureMode(texture);
     {
         for (S32 i = 0; i < layer_coords->multi_points.count; i += 1) {
-            Range multi_point = layer_coords->multi_points.d[i];
+            const Range multi_point = layer_coords->multi_points.d[i];
             for (S32 j = multi_point.min; j < multi_point.count; j += 1) {
                 Coord2 point = layer_coords->texture_coords.d[j];
-                point.x /= 8.0;
-                point.y /= 8.0;
+                point.x *= scale_factor;
+                point.y *= scale_factor;
                 DrawCircleV(Vector2FromCoord2(point), 10.f, RED);
             }
         }
         for (S32 i = 0; i < layer_coords->multi_line_strings.count; i += 1) {
-            Range multi_line_string = layer_coords->multi_line_strings.d[i];
+            const Range multi_line_string = layer_coords->multi_line_strings.d[i];
             for (S32 j = multi_line_string.min; j < multi_line_string.count; j += 1) {
-                Range line_string = layer_coords->line_strings.d[i];
+                const Range line_string = layer_coords->line_strings.d[i];
                 for (S32 k = line_string.min; k < line_string.count - 1; k += 1) {
                     Vector2 a = Vector2FromCoord2(layer_coords->texture_coords.d[k]);
-                    a.x /= 8.f;
-                    a.y /= 8.f;
+                    a.x *= scale_factor;
+                    a.y *= scale_factor;
                     Vector2 b = Vector2FromCoord2(layer_coords->texture_coords.d[k + 1]);
-                    b.x /= 8.f;
-                    b.y /= 8.f;
+                    b.x *= scale_factor;
+                    b.y *= scale_factor;
                     DrawLineEx(a, b, 10.f, RED);
                 }
             }
@@ -479,7 +482,7 @@ static void LayerTextureFromCoords(RenderTexture2DArray *textures,
     RenderTexture2DArrayPush(textures, texture);
 }
 static Mesh MeshFromTriangles(Arena *arena, const TriangleArray *triangles,
-                              const Coord2Slice coords) {
+                              const Coord2Slice coords, F32 scale_factor) {
 
     // create a big mesh (triangle soup) to avoid unsigned short limit for
     // indicdes in openGL
@@ -492,16 +495,19 @@ static Mesh MeshFromTriangles(Arena *arena, const TriangleArray *triangles,
     S32 v = 0;
     for (S32 i = 0; i < triangles->count; i++) {
         Triangle t = triangles->d[i];
-        mesh.vertices[v++] = (float)coords.v[t.a].x;
-        mesh.vertices[v++] = -(float)coords.v[t.a].y;
+        mesh.vertices[v++] = (float)coords.v[t.a].x * scale_factor;
+        mesh.vertices[v++] = (float)coords.v[t.a].y * scale_factor + 512;
         mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.b].x;
-        mesh.vertices[v++] = -(float)coords.v[t.b].y;
+        mesh.vertices[v++] = (float)coords.v[t.c].x * scale_factor;
+        mesh.vertices[v++] = (float)coords.v[t.c].y * scale_factor + 512;
         mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.c].x;
-        mesh.vertices[v++] = -(float)coords.v[t.c].y;
+        mesh.vertices[v++] = (float)coords.v[t.b].x * scale_factor;
+        mesh.vertices[v++] = (float)coords.v[t.b].y * scale_factor + 512;
         mesh.vertices[v++] = 0.f;
     }
+
+    assert(mesh.vertexCount > 2);
+    assert(mesh.triangleCount > 0);
     UploadMesh(&mesh, false);
     return mesh;
 }
@@ -509,11 +515,14 @@ static Mesh MeshFromTriangles(Arena *arena, const TriangleArray *triangles,
 // creates a mesh from the relevant coords and polygon
 // stores the mesh triangle soup on the arena passed.
 static void LayerMeshFromCoords(Arena *arena, MeshArray *meshes,
-                                LayerCoords *layer_coords) {
-    // const S32 tile_extent = 512; // TODO: parse this from tile layer??
+                                LayerCoords *layer_coords, U32 tile_extent) {
     Temp_Arena_Memory scratch = GetScratch();
-    TriangleArray triangles =
-        TriangleArrayNew(scratch.arena, layer_coords->mesh_coords.count);
+    const S32 mesh_size = 512;
+    const F32 scale_factor = (F32)mesh_size / (F32)tile_extent;
+    TriangleArray triangles = TriangleArrayNew(
+        scratch.arena, layer_coords->mesh_coords.count *
+                           2); // account for some triangulation that might violate
+                               // #triangulated triangles = #coords - 2.
     S32Array contour_sizes = S32ArrayNew(scratch.arena, layer_coords->polygons.count);
     for (S32 i = 0; i < layer_coords->multi_polygons.count; i += 1) {
         const Range polygon_contours = layer_coords->multi_polygons.d[i];
@@ -548,20 +557,24 @@ static void LayerMeshFromCoords(Arena *arena, MeshArray *meshes,
     }
     MeshArrayPush(meshes,
                   MeshFromTriangles(arena, &triangles,
-                                    Coord2SliceFromArray(&layer_coords->mesh_coords)));
+                                    Coord2SliceFromArray(&layer_coords->mesh_coords),
+                                    scale_factor));
     temp_arena_memory_end(scratch);
 }
 
 static void ComputeGpuData(Arena *arena, MeshArray *meshes,
                            RenderTexture2DArray *textures, String8Array *names,
-                           LayerCoords *layer_coords) {
-    LayerTextureFromCoords(textures, layer_coords);
-    LayerMeshFromCoords(arena, meshes, layer_coords);
+                           LayerCoords *layer_coords, U32 extent) {
+    if (layer_coords->texture_coords.count > 0) {
+        LayerTextureFromCoords(textures, layer_coords, extent);
+    }
+    if (layer_coords->mesh_coords.count > 0) {
+        LayerMeshFromCoords(arena, meshes, layer_coords, extent);
+    }
 }
 
 // parse a MVT and store it as a mesh/texture on the arena given.
-static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena,
-                                                MapboxVectorTileProtobufData data) {
+static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData data) {
     Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
     S32 layer_count = LayerCount(data);
     DEBUG_MSG("layer count: %d\n", layer_count);
@@ -569,6 +582,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena,
     RenderTexture2DArray textures = RenderTexture2DArrayNew(arena, layer_count);
     String8Array names = String8ArrayNew(arena, layer_count);
     U64 ip = 0;
+    U64 parsed_layers = 0;
     while (ip < data.size) {
         U64 saved_ip = ip;
         const ProtobufTag layer_tag = TagFromProtobufData(data, &ip);
@@ -578,6 +592,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena,
         LayerCoords *layer_coords =
             CreateNewLayer(scratch.arena, safe_cast_s32_from_u32(layer_size));
         const U64 layer_end = ip + layer_size;
+        U32 extent = 4096; // default extent from spec
         while (ip < layer_end) {
             saved_ip = ip;
             const ProtobufTag layer_field = TagFromProtobufData(data, &ip);
@@ -594,6 +609,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena,
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
             case 3: {
+                assert(layer_field.wire_type == LEN);
                 const String8 key_name = String8FromProtobufData(data, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
@@ -605,11 +621,12 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena,
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
             case 5: {
-                const U32 extent = U32FromVarInt128(data, &ip);
-                assert(extent == 4096);
+                assert(layer_field.wire_type == VARINT);
+                extent = U32FromVarInt128(data, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
             case 15: {
+                assert(layer_field.wire_type == VARINT);
                 const U32 version = U32FromVarInt128(data, &ip);
                 assert(version == 2);
                 assert(saved_ip < ip); // ensure we are making progress
@@ -624,7 +641,11 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena,
             layer_coords->texture_coords.count > 0) {
             assert(layer_coords->mesh_coords.count > 0 ||
                    layer_coords->texture_coords.count > 0);
-            ComputeGpuData(arena, &meshes, &textures, &names, layer_coords);
+            ComputeGpuData(arena, &meshes, &textures, &names, layer_coords, extent);
+        }
+        parsed_layers += 1;
+        if (parsed_layers == layer_count) {
+            assert(ip == data.size);
         }
     }
     assert(meshes.count > 0 || textures.count > 0);

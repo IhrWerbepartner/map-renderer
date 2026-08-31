@@ -4,6 +4,7 @@
 #include "string8.h"
 #include "vtpk/vtpk.h"
 #include <assert.h>
+#include <raylib.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@ int main(int argc, char **argv) {
     // Initialization
     //--------------------------------------------------------------------------------------
     const Screen screen = {.width = 2560, .height = 1440};
+    SetTraceLogLevel(LOG_INFO);
     const String8 map_file = String8FromCString(argv[1]);
 
     if (String8EndsWith(map_file, String8FromCString(".geojson")) ||
