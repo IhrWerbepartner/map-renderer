@@ -181,8 +181,12 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen, S32 tile
         const S32 zoom_level_new = (S32)(wheel_scaled + tile_camera->zoom);
         if (zoom_level_old < zoom_level_new) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 2.f);
+            tile_camera->target =
+                Vector2Subtract(tile_camera->target, (Vector2){0.f, (F32)tile_size});
         } else if (zoom_level_old > zoom_level_new) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 0.5f);
+            tile_camera->target =
+                Vector2Add(tile_camera->target, (Vector2){0.f, (F32)tile_size / 2.f});
         } else {
             tile_camera->target = mouseWorldPos;
         }
