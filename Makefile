@@ -26,6 +26,9 @@ map-renderer: $(SOURCE_FILES)
 unoptimized: $(SOURCE_FILES)
 	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g map_renderer.c -o $(EXE_NAME_UNOPTIMIZED)
 
+stripped: $(SOURCE_FILES)
+	gcc $(CFLAGS) $(executable) $(LDFLAGS) map_renderer.c -o stripped_$(EXE_NAME) -O2
+
 debug: unoptimized
 	gf2 $(EXE_NAME_UNOPTIMIZED)
 

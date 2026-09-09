@@ -110,9 +110,9 @@ struct VtpkFile {
 };
 
 static unsigned char gpu_data_arena_level0to7_buf[MB(100)] = {0};
-static unsigned char gpu_data_arena_level8to12_buf[MB(100)] = {0};
-static unsigned char gpu_data_arena_level13to15_buf[MB(100)] = {0};
-static unsigned char gpu_data_arena_level16_buf[MB(100)] = {0};
+static unsigned char gpu_data_arena_level8to12_buf[MB(300)] = {0};
+static unsigned char gpu_data_arena_level13to15_buf[MB(300)] = {0};
+static unsigned char gpu_data_arena_level16_buf[MB(300)] = {0};
 
 static Arena gpu_data_arena_level0to7 =
     (Arena){gpu_data_arena_level0to7_buf, sizeof(gpu_data_arena_level0to7_buf), 0, 0};
@@ -143,7 +143,7 @@ static U64 UncompressedFileSize(mz_zip_archive *archive, U32 file_index) {
 
 static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, const JsonNode *node, S32 x,
                                 S32 y, S32 level) {
-    assert(node != NULL);
+    assert(node != &json_node_null);
     switch (node->type) {
     case JSON_ARRAY: {
         ASSERT(node->children.count == 4, "invalid list of children");
@@ -179,6 +179,7 @@ static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, const JsonNode *no
                                .coordinate = (VectorTileCoordinate){x, y, level}};
         return node_index;
     }
+    case JSON_INVALID:
     case JSON_NULL:
     case JSON_BOOL:
     case JSON_OBJECT:
@@ -216,13 +217,9 @@ static void QuadTreeFromJson(Arena *arena, VtpkFile *vtpk_file) {
                                  file_size + 1, 0);
     assert(vtpk_file->archive->m_last_error == MZ_ZIP_NO_ERROR);
 
-    JsonNode root = {0};
-    JsonParseValue(json_scratch.arena, &root, (String8){0}, file_content);
-    assert(root.type == JSON_NULL);
-    // get root object (second node in parsed json)
-    root = *root.children.first;
-    assert(root.type == JSON_OBJECT);
-    const JsonNode *tree_root = find_key_in_children(&root, String8FromCString("index"));
+    JsonNode *root = JsonNodeFromString(arena, file_content);
+    assert(root->type == JSON_OBJECT);
+    const JsonNode *tree_root = JsonFindKey(root, String8FromCString("index"));
     vtpk_file->root_node =
         QuadTreeNodeFromJson(&vtpk_file->quad_tree, tree_root, 0, 0, 0);
 
@@ -238,19 +235,14 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
                                  file_size + 1, 0);
 
-    JsonNode root = {0};
-    JsonParseValue(arena, &root, (String8){0}, file_content);
-    assert(root.type == JSON_NULL);
-    // get root object (second node in parsed json)
-    root = *root.children.first;
-    assert(root.type == JSON_OBJECT);
-    const JsonNode *tile_info =
-        find_key_in_children(&root, String8FromCString("tileInfo"));
+    JsonNode *root = JsonNodeFromString(arena, file_content);
+    assert(root->type == JSON_OBJECT);
+    const JsonNode *tile_info = JsonFindKey(root, String8FromCString("tileInfo"));
     {
         const JsonNode *tile_info_rows =
-            find_key_in_children(tile_info, String8FromCString("rows"));
+            JsonFindKey(tile_info, String8FromCString("rows"));
         const JsonNode *tile_info_cols =
-            find_key_in_children(tile_info, String8FromCString("cols"));
+            JsonFindKey(tile_info, String8FromCString("cols"));
         assert(tile_info_rows->type == JSON_INTEGER);
         assert(tile_info_cols->type == JSON_INTEGER);
         vtpk_file->root_propreties.tile_info_rows =
@@ -259,36 +251,32 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
             safe_cast_u32(tile_info_cols->num.u_value);
     }
     {
-        const JsonNode *origin =
-            find_key_in_children(tile_info, String8FromCString("origin"));
+        const JsonNode *origin = JsonFindKey(tile_info, String8FromCString("origin"));
         assert(origin->type == JSON_OBJECT);
-        const JsonNode *origin_x = find_key_in_children(origin, String8FromCString("x"));
-        const JsonNode *origin_y = find_key_in_children(origin, String8FromCString("y"));
+        const JsonNode *origin_x = JsonFindKey(origin, String8FromCString("x"));
+        const JsonNode *origin_y = JsonFindKey(origin, String8FromCString("y"));
         assert(origin_x->type == JSON_DOUBLE);
         assert(origin_y->type == JSON_DOUBLE);
         vtpk_file->root_propreties.tile_info_origin_x = origin_x->num.dbl_value;
         vtpk_file->root_propreties.tile_info_origin_y = origin_y->num.dbl_value;
     }
     {
-        const JsonNode *lods =
-            find_key_in_children(tile_info, String8FromCString("lods"));
+        const JsonNode *lods = JsonFindKey(tile_info, String8FromCString("lods"));
         vtpk_file->root_propreties.lod_resolutions =
             F64ArrayNew(arena, lods->children.count);
         for (JsonNode *child = lods->children.first; child != lods->children.last;
              child = child->next) {
             assert(child->type == JSON_OBJECT);
             const JsonNode *resolution =
-                find_key_in_children(child, String8FromCString("resolution"));
+                JsonFindKey(child, String8FromCString("resolution"));
             assert(resolution->type == JSON_DOUBLE);
             F64ArrayPush(&vtpk_file->root_propreties.lod_resolutions,
                          resolution->num.dbl_value);
         }
     }
     {
-        const JsonNode *min_LOD =
-            find_key_in_children(&root, String8FromCString("minLOD"));
-        const JsonNode *max_LOD =
-            find_key_in_children(&root, String8FromCString("minLOD"));
+        const JsonNode *min_LOD = JsonFindKey(root, String8FromCString("minLOD"));
+        const JsonNode *max_LOD = JsonFindKey(root, String8FromCString("minLOD"));
         assert(min_LOD->type == JSON_INTEGER);
         assert(max_LOD->type == JSON_INTEGER);
         vtpk_file->root_propreties.lod_min = safe_cast_u32(min_LOD->num.u_value);

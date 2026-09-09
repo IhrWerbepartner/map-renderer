@@ -9,5 +9,6 @@ samples/RhodeIsland.ldgeojson
 
 map-renderer
 unoptimized-map-renderer
+stripped_map-renderer
 ressources/
 .idea/

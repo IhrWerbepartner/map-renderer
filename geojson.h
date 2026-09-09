@@ -2,8 +2,8 @@
 #include "base.h"
 #include "fixed-array.c"
 #include "json_parser.h"
-#include "vendor/raymath.h"
 #include "string8.h"
+#include "vendor/raymath.h"
 #include <assert.h>
 #include <math.h>
 #include <raylib.h>
@@ -176,7 +176,7 @@ static S32 ContourFromJsonArray(const JsonNode *coordinates, Coord2Array *result
     Coord2 min_coordinate = (Coord2){min_F64, max_F64};
     const JsonNode *point_coords = coordinates->children.first;
     S32 index = 0;
-    while (point_coords != NULL && point_coords != coordinates->children.last) {
+    while (point_coords != &json_node_null && point_coords != coordinates->children.last) {
         const Coord2 coordinate = Coord2FromJsonArrayNode(point_coords);
         Coord2ArrayPush(result_array, coordinate);
         if (coordinate.y < min_coordinate.y ||
@@ -225,7 +225,7 @@ void ContourFromJsonArrayReversed(const JsonNode *coordinates,
         ERROR_MSG("invalid contour with: %d coordinates\n", coordinates->children.count)
     }
     const JsonNode *point_coords = coordinates->children.last;
-    while (point_coords != NULL && point_coords != coordinates->children.first) {
+    while (point_coords != &json_node_null && point_coords != coordinates->children.first) {
         Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
         point_coords = point_coords->prev;
     }
@@ -238,7 +238,7 @@ static void Coord2ArrayFromJsonArray(const JsonNode *coordinates,
         ERROR_MSG("invalid coordinates node type")
     }
     JsonNode *point_coords = coordinates->children.first;
-    while (point_coords != NULL) {
+    while (point_coords != &json_node_null) {
         Coord2ArrayPush(result_array, Coord2FromJsonArrayNode(point_coords));
         point_coords = point_coords->next;
     }
@@ -246,20 +246,16 @@ static void Coord2ArrayFromJsonArray(const JsonNode *coordinates,
 
 static GeoJson *serialize(Arena *arena, JsonNode *root) {
     GeoJson *render_data = (GeoJson *)arena_alloc(arena, sizeof(GeoJson));
-    if (root->type != JSON_NULL || root->children.count != 1) {
-        ERROR_MSG("invalid json")
-    }
-    root = root->children.first;
     if (root->type != JSON_OBJECT) {
         ERROR_MSG("invalid object")
     }
-    JsonNode *const featureCollectionType = find_key_value_in_children(
+    JsonNode *const featureCollectionType = JsonFindKeyValue(
         root, String8FromCString("type"), String8FromCString("FeatureCollection"));
-    if (featureCollectionType == NULL) {
+    if (featureCollectionType == &json_node_null) {
         ERROR_MSG("invalid geojson type")
     }
-    JsonNode *const features = find_key_in_children(root, String8FromCString("features"));
-    if (features == NULL || features->type != JSON_ARRAY) {
+    JsonNode *const features = JsonFindKey(root, String8FromCString("features"));
+    if (features == &json_node_null || features->type != JSON_ARRAY) {
         ERROR_MSG("invalid geojson features")
     }
     // init_all_arrays(arena, parsed, features->children.length); TODO:
@@ -268,28 +264,27 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
 
     // parse all "Features" in their appropriate arrays
     Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
-    while (current_child != NULL) {
-        JsonNode *const feature_type = find_key_value_in_children(
+    while (current_child != &json_node_null) {
+        JsonNode *const feature_type = JsonFindKeyValue(
             current_child, String8FromCString("type"), String8FromCString("Feature"));
-        if (feature_type == NULL) {
+        if (feature_type == &json_node_null) {
             ERROR_MSG("invalid feature type")
         }
 
         JsonNode *const geometry =
-            find_key_in_children(current_child, String8FromCString("geometry"));
-        if (geometry == NULL || geometry->type != JSON_OBJECT) {
+            JsonFindKey(current_child, String8FromCString("geometry"));
+        if (geometry == &json_node_null || geometry->type != JSON_OBJECT) {
             ERROR_MSG("invalid or no geometry supplied")
         }
 
-        JsonNode *const geometry_type =
-            find_key_in_children(geometry, String8FromCString("type"));
-        if (geometry_type == NULL || geometry_type->type != JSON_STRING) {
+        JsonNode *const geometry_type = JsonFindKey(geometry, String8FromCString("type"));
+        if (geometry_type == &json_node_null || geometry_type->type != JSON_STRING) {
             ERROR_MSG("no geometry type supplied")
         }
 
         JsonNode *const coordinates =
-            find_key_in_children(geometry, String8FromCString("coordinates"));
-        if (coordinates == NULL || coordinates->type != JSON_ARRAY) {
+            JsonFindKey(geometry, String8FromCString("coordinates"));
+        if (coordinates == &json_node_null || coordinates->type != JSON_ARRAY) {
             ERROR_MSG("no coordinates supplied")
         }
 
@@ -330,7 +325,7 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                 .lines = (Slice){.start = render_data->multi_line_string_array.count,
                                  .length = coordinates->children.count},
             };
-            while (line_string != NULL) {
+            while (line_string != &json_node_null) {
                 LineString ls = (LineString){
                     .coordinates =
                         (Slice){.start = render_data->multi_line_string_coords.count,
@@ -355,12 +350,11 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             S32 first_coordinate_idx = render_data->polygon_coords.count;
             S32 first_triangle_idx = render_data->polygon_triangles.count;
 
-
 #if SEIDEL_TRIANGULATION
             // create emtpy slot at vertices[0] for triangulation
             Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
             JsonNode *contour_array = coordinates->children.first;
-            if (contour_array == NULL || contour_array->children.count <= 1) {
+            if (contour_array == &json_node_null || contour_array->children.count <= 1) {
                 ERROR_MSG("invalid size for polygon contour: %d",
                           contour_array->children.count)
             }
@@ -373,7 +367,7 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                                         contour_array->children.count - 1),
                 min_coordinate_index);
             contour_array = contour_array->next;
-            while (contour_array != NULL) {
+            while (contour_array != &json_node_null) {
                 S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
                 if (outerContourIsClockwise) {
                     ContourFromJsonArrayReversed(contour_array,
@@ -391,14 +385,14 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                              S32SliceFromArray(&contour_sizes));
 #else
             JsonNode *contour_array = coordinates->children.first;
-            if (contour_array == NULL || contour_array->children.count <= 1) {
+            if (contour_array == &json_node_null || contour_array->children.count <= 1) {
                 ERROR_MSG("invalid size for polygon contour: %d",
                           contour_array->children.count)
             }
             ContourFromJsonArray(contour_array, &render_data->polygon_coords);
             S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
             contour_array = contour_array->next;
-            while (contour_array != NULL) {
+            while (contour_array != &json_node_null) {
                 S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
                 ContourFromJsonArray(contour_array, &render_data->polygon_coords);
                 contour_array = contour_array->next;
@@ -443,14 +437,13 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             ASSERT(polygon->type == JSON_ARRAY,
                    "expected array for MultiPolygon coordinates\n")
 
-            while (polygon != NULL) {
+            while (polygon != &json_node_null) {
                 S32 contour_count = polygon->children.count;
                 S32Array contour_sizes = S32ArrayNew(scratch.arena, contour_count);
                 Coord2 *vertices =
                     &render_data->polygon_coords.d[render_data->polygon_coords.count];
                 S32 first_coordinate_idx = render_data->polygon_coords.count;
                 S32 first_triangle_idx = render_data->polygon_triangles.count;
-
 
 #if SEIDEL_TRIANGULATION
                 // create emtpy slot at vertices[0] for triangulation
@@ -466,7 +459,7 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                     min_coordinate_index);
                 // DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
                 contour_array = contour_array->next;
-                while (contour_array != NULL) {
+                while (contour_array != &json_node_null) {
                     ASSERT(contour_array->children.count > 1,
                            "invalid size for polygon contour: %d",
                            contour_array->children.count)
@@ -492,7 +485,7 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                 S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
                 // DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
                 contour_array = contour_array->next;
-                while (contour_array != NULL) {
+                while (contour_array != &json_node_null) {
                     ASSERT(contour_array->children.count > 1,
                            "invalid size for polygon contour: %d",
                            contour_array->children.count)
@@ -561,9 +554,9 @@ static GeoJson *geo_json_parse(Arena *arena, char *filepath) {
     fread(file_content, fsize, 1, f);
     fclose(f);
 
-    JsonNode js = {0};
-    JsonParseValue(arena, &js, (String8){0}, file_content);
-    GeoJson *serialized = serialize(arena, &js);
+    JsonNode *root = JsonNodeFromString(arena, file_content);
+    assert(root->type == JSON_OBJECT);
+    GeoJson *serialized = serialize(arena, root);
 
     temp_arena_memory_end(scratch);
     return serialized;

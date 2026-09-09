@@ -262,8 +262,8 @@ static void PlotterReadParametersAndCreatePoint(MVT_ProtobufData data, U64 *ip,
     Coord2ArrayPush(coords, (Coord2){.x = plotter->pos_x, .y = plotter->pos_y});
 }
 
-static void ProtobufParsePolygon(const MVT_ProtobufData data, LayerCoords *coords,
-                                 const Range geometry) {
+static void MultiPolygonFromProtobufData(const MVT_ProtobufData data, LayerCoords *coords,
+                                         const Range geometry) {
     MVT_Plotter plotter = {0};
     S32 polygon_ring_start = coords->polygons.count;
     S32 polygon_vertex_start = coords->mesh_coords.count;
@@ -292,9 +292,10 @@ static void ProtobufParsePolygon(const MVT_ProtobufData data, LayerCoords *coord
             switch (winding) {
             case COUNTER_CLOCKWISE: {
                 if (coords->polygons.count > polygon_ring_start) {
-                    RangeArrayPush(&coords->multi_polygons,
-                                   (Range){polygon_ring_start,
-                                           coords->polygons.count - polygon_ring_start});
+                    RangeArrayPush(
+                        &coords->multi_polygons,
+                        (Range){.min = polygon_ring_start,
+                                .count = coords->polygons.count - polygon_ring_start});
                     polygon_ring_start = coords->polygons.count;
                 }
             } break;
@@ -308,18 +309,19 @@ static void ProtobufParsePolygon(const MVT_ProtobufData data, LayerCoords *coord
         } break;
         }
     }
-    RangeArrayPush(
-        &coords->multi_polygons,
-        (Range){polygon_ring_start, coords->polygons.count - polygon_ring_start});
+    RangeArrayPush(&coords->multi_polygons,
+                   (Range){.min = polygon_ring_start,
+                           .count = coords->polygons.count - polygon_ring_start});
 }
 
-static void ProtobufParseLineString(const MVT_ProtobufData data, LayerCoords *coords,
-                                    const Range geometry) {
+static void MultiLineStringFromProtobufData(const MVT_ProtobufData data,
+                                            LayerCoords *coords, const Range geometry) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
     MVT_Plotter plotter = {0};
     S32 line_string_start = coords->texture_coords.count;
     const S32 multi_line_string_start = coords->line_strings.count;
+    bool encountered_move_to = false;
     for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
         const PlotterInstruction instruction =
             PlotterInstructionFromProtobufData(data, &ip);
@@ -328,12 +330,16 @@ static void ProtobufParseLineString(const MVT_ProtobufData data, LayerCoords *co
             assert(instruction.count == 1);
             PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
                                                 &coords->texture_coords);
-            if (coords->line_strings.count > multi_line_string_start) {
+            if (encountered_move_to) {
+                const S32 line_string_coordinate_count =
+                    coords->texture_coords.count - line_string_start;
+                assert(line_string_coordinate_count > 0);
                 RangeArrayPush(&coords->line_strings,
-                               (Range){line_string_start,
-                                       coords->texture_coords.count - line_string_start});
+                               (Range){.min = line_string_start,
+                                       .count = line_string_coordinate_count});
                 line_string_start = coords->texture_coords.count;
             }
+            encountered_move_to = true;
         } break;
         case LINE_TO: {
             assert(instruction.count > 0);
@@ -347,13 +353,19 @@ static void ProtobufParseLineString(const MVT_ProtobufData data, LayerCoords *co
         } break;
         }
     }
-    RangeArrayPush(&coords->multi_line_strings,
-                   (Range){multi_line_string_start,
-                           coords->line_strings.count - multi_line_string_start});
+    const S32 line_string_coordinate_count =
+        coords->texture_coords.count - line_string_start;
+    assert(line_string_coordinate_count > 0);
+    RangeArrayPush(&coords->line_strings, (Range){.min = line_string_start,
+                                                  .count = line_string_coordinate_count});
+    RangeArrayPush(
+        &coords->multi_line_strings,
+        (Range){.min = multi_line_string_start,
+                .count = coords->line_strings.count - multi_line_string_start});
 }
 
-static void ProtobufParsePoint(const MVT_ProtobufData data, LayerCoords *coords,
-                               const Range geometry) {
+static void PointFromProtobufData(const MVT_ProtobufData data, LayerCoords *coords,
+                                  const Range geometry) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
     MVT_Plotter plotter = {0};
@@ -422,13 +434,13 @@ static void ProtobufParseFeature(MVT_ProtobufData data, LayerCoords *coords,
     case GEOMETRY_TYPE_UNKOWN:
         ERROR_MSG("UNKNOWN geoemtry not supported")
     case GEOMETRY_TYPE_POINT:
-        ProtobufParsePoint(data, coords, geometry_range);
+        PointFromProtobufData(data, coords, geometry_range);
         break;
     case GEOMETRY_TYPE_LINESTRING:
-        ProtobufParseLineString(data, coords, geometry_range);
+        MultiLineStringFromProtobufData(data, coords, geometry_range);
         break;
     case GEOMETRY_TYPE_POLYGON:
-        ProtobufParsePolygon(data, coords, geometry_range);
+        MultiPolygonFromProtobufData(data, coords, geometry_range);
         break;
     }
 }
@@ -450,8 +462,9 @@ static void LayerTextureFromCoords(RenderTexture2DArray *textures,
                                    LayerCoords *layer_coords, U32 tile_extent) {
     const S32 texture_size = 512;
     const F32 scale_factor = (F32)texture_size / (F32)tile_extent;
-    RenderTexture2D texture = LoadRenderTexture(texture_size, texture_size);
+    const RenderTexture2D texture = LoadRenderTexture(texture_size, texture_size);
     BeginTextureMode(texture);
+    ClearBackground(BLANK);
     {
         for (S32 i = 0; i < layer_coords->multi_points.count; i += 1) {
             const Range multi_point = layer_coords->multi_points.d[i];
@@ -459,13 +472,17 @@ static void LayerTextureFromCoords(RenderTexture2DArray *textures,
                 Coord2 point = layer_coords->texture_coords.d[j];
                 point.x *= scale_factor;
                 point.y *= scale_factor;
-                DrawCircleV(Vector2FromCoord2(point), 10.f, RED);
+                DrawCircleV(Vector2FromCoord2(point), 5.f, GREEN);
             }
         }
-        for (S32 i = 0; i < layer_coords->multi_line_strings.count; i += 1) {
-            const Range multi_line_string = layer_coords->multi_line_strings.d[i];
-            for (S32 j = multi_line_string.min; j < multi_line_string.count; j += 1) {
-                const Range line_string = layer_coords->line_strings.d[i];
+        for (S32 multi_line_string_index = 0;
+             multi_line_string_index < layer_coords->multi_line_strings.count;
+             multi_line_string_index += 1) {
+            const Range multi_line_string =
+                layer_coords->multi_line_strings.d[multi_line_string_index];
+            for (S32 line_string_index = multi_line_string.min;
+                 line_string_index < multi_line_string.count; line_string_index += 1) {
+                const Range line_string = layer_coords->line_strings.d[line_string_index];
                 for (S32 k = line_string.min; k < line_string.count - 1; k += 1) {
                     Vector2 a = Vector2FromCoord2(layer_coords->texture_coords.d[k]);
                     a.x *= scale_factor;
@@ -473,7 +490,8 @@ static void LayerTextureFromCoords(RenderTexture2DArray *textures,
                     Vector2 b = Vector2FromCoord2(layer_coords->texture_coords.d[k + 1]);
                     b.x *= scale_factor;
                     b.y *= scale_factor;
-                    DrawLineEx(a, b, 10.f, RED);
+                    DrawCircleV(a, 1.f, GOLD);
+                    DrawLineEx(a, b, 1.f, RED);
                 }
             }
         }
@@ -582,7 +600,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
     RenderTexture2DArray textures = RenderTexture2DArrayNew(arena, layer_count);
     String8Array names = String8ArrayNew(arena, layer_count);
     U64 ip = 0;
-    U64 parsed_layers = 0;
+    S32 parsed_layers = 0;
     while (ip < data.size) {
         U64 saved_ip = ip;
         const ProtobufTag layer_tag = TagFromProtobufData(data, &ip);

@@ -9,7 +9,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define DRAW_CACHE_SIZE (1024) // TODO: fine tune
+// TODO: fine tune
+#define DRAW_CACHE_SIZE (1024)
+#define DRAW_TILE_PIXEL_COUNT 512
 
 typedef struct DrawCache DrawCache;
 struct DrawCache {
@@ -21,6 +23,8 @@ typedef struct VTPK_RenderOptions VTPK_RenderOptions;
 struct VTPK_RenderOptions {
     bool show_grid;
     bool show_bounding_box;
+    bool show_meshes;
+    bool show_textures;
 };
 
 static void PrintMissingTiles(S32Slice s, QuadTreeNodeArray quad_tree) {
@@ -145,7 +149,7 @@ static void BeginModeTile(TileCamera camera) {
 // End 2D mode with custom camera
 static void EndModeTile(void) { EndMode2D(); }
 
-static TileCamera ResetTileCamera(Screen screen, S32 tile_size) {
+static TileCamera ResetTileCamera(Screen screen) {
     return (TileCamera){
         .zoom =
             1.0f, // speicfies the zoom level. Is in the range (0; +infinity).
@@ -153,12 +157,12 @@ static TileCamera ResetTileCamera(Screen screen, S32 tile_size) {
                   // meaning it zooms the camera until the next tile size is hit.
         .rotation = 0.0f,
         .offset = (Vector2){(float)screen.width / 2.0f, (float)screen.height / 2.0f},
-        .target.x = (F32)tile_size / 2.f,
-        .target.y = (F32)tile_size / 2.f,
+        .target.x = (F32)DRAW_TILE_PIXEL_COUNT / 2.f,
+        .target.y = (F32)DRAW_TILE_PIXEL_COUNT / 2.f,
     };
 }
 
-static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen, S32 tile_size) {
+static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
 
     Camera2D camera_2d = Camera2DFromTileCamera(*tile_camera);
 
@@ -180,12 +184,12 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen, S32 tile
         const S32 zoom_level_new = (S32)(wheel_scaled + tile_camera->zoom);
         if (zoom_level_old < zoom_level_new) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 2.f);
-            tile_camera->target =
-                Vector2Subtract(tile_camera->target, (Vector2){0.f, (F32)tile_size});
+            tile_camera->target = Vector2Subtract(
+                tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT});
         } else if (zoom_level_old > zoom_level_new) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 0.5f);
-            tile_camera->target =
-                Vector2Add(tile_camera->target, (Vector2){0.f, (F32)tile_size / 2.f});
+            tile_camera->target = Vector2Add(
+                tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT / 2.f});
         } else {
             tile_camera->target = mouseWorldPos;
         }
@@ -201,7 +205,7 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen, S32 tile
 
     // Camera reset (zoom and rotation)
     if (IsKeyPressed(KEY_R)) {
-        *tile_camera = ResetTileCamera(screen, tile_size);
+        *tile_camera = ResetTileCamera(screen);
     }
 }
 
@@ -248,16 +252,39 @@ static void DrawWorldGrid(Camera2D camera, Screen screen, F32 gridSize, Color gr
     }
 }
 
-void VtpkDisplayFile(const char *filename, Screen screen) {
+static void UpdateVisibleBoundingBox(VtpkFile *vtpk_file, TileCamera camera_tile,
+                                     Screen screen) {
+    const Camera2D camera_2d = Camera2DFromTileCamera(camera_tile);
+    {
+        const Vector2 world_top_left = GetScreenToWorld2D(Vector2Zero(), camera_2d);
+        const Vector2 tile_top_left =
+            Vector2Scale(world_top_left, 1.f / DRAW_TILE_PIXEL_COUNT);
+        TraceLog(LOG_INFO, "top_left tile: (col: %.1f, row: %.1f)", tile_top_left.x,
+                 tile_top_left.y);
+        vtpk_file->bounding_box.min_x = (S32)floorf(tile_top_left.x);
+        vtpk_file->bounding_box.min_y = (S32)floorf(tile_top_left.y) - 1;
+    }
+    {
+        const Vector2 world_bot_right = GetScreenToWorld2D(
+            (Vector2){(F32)screen.width, (F32)screen.height}, camera_2d);
+        const Vector2 tile_bot_right =
+            Vector2Scale(world_bot_right, 1.f / DRAW_TILE_PIXEL_COUNT);
+        TraceLog(LOG_INFO, "bot_right tile: (col: %.0f, row: %.0f)",
+                 ceilf(tile_bot_right.x), ceilf(tile_bot_right.y));
+        vtpk_file->bounding_box.max_x = (S32)floorf(tile_bot_right.x);
+        vtpk_file->bounding_box.max_y = (S32)floorf(tile_bot_right.y) - 1;
+    }
+}
+
+static void VtpkDisplayFile(const char *filename, Screen screen) {
     Temp_Arena_Memory scratch = GetScratch();
 
-    VTPK_RenderOptions render_options = {0};
+    VTPK_RenderOptions render_options = {.show_meshes = true, .show_textures = true};
     VtpkFile *vtpk_file = VtpkParseFile(scratch.arena, filename);
     vtpk_file->bounding_box = (AABB){min_S32, min_S32, max_S32, max_S32};
 
-    const S32 tile_size = 512;
     const S32 tile_units_max = 512;
-    TileCamera camera = ResetTileCamera(screen, tile_size);
+    TileCamera camera = ResetTileCamera(screen);
 
     const S32 draw_cache_size = DRAW_CACHE_SIZE;
     DrawCache draw_cache =
@@ -274,7 +301,16 @@ void VtpkDisplayFile(const char *filename, Screen screen) {
     {
         // Update
         //----------------------------------------------------------------------------------
-        UpdateTileCameraPos(&camera, screen, tile_size);
+        if (IsKeyPressed(KEY_B))
+            render_options.show_bounding_box ^= true;
+        if (IsKeyPressed(KEY_M))
+            render_options.show_meshes ^= true;
+        if (IsKeyReleased(KEY_T))
+            render_options.show_textures ^= true;
+        if (IsKeyReleased(KEY_G))
+            render_options.show_grid ^= true;
+        UpdateTileCameraPos(&camera, screen);
+        UpdateVisibleBoundingBox(vtpk_file, camera, screen);
 
         //----------------------------------------------------------------------------------
         // Draw
@@ -286,11 +322,9 @@ void VtpkDisplayFile(const char *filename, Screen screen) {
 
         ClearBackground(RAYWHITE);
         BeginModeTile(camera);
-        // Camera2D *c = (Camera2D *)&camera;
-        // BeginMode2D(*c);
         if (render_options.show_grid) {
-            DrawWorldGrid(Camera2DFromTileCamera(camera), screen, (F32)tile_size,
-                          LIGHTGRAY, RED);
+            DrawWorldGrid(Camera2DFromTileCamera(camera), screen,
+                          (F32)DRAW_TILE_PIXEL_COUNT, LIGHTGRAY, RED);
         }
         {
             // DrawRectangle(0, 512, tile_size, tile_size, RED);
@@ -305,7 +339,7 @@ void VtpkDisplayFile(const char *filename, Screen screen) {
                 rlPushMatrix();
                 rlLoadIdentity();
                 rlMultMatrixf(MatrixToFloat(transform));
-                {
+                if (render_options.show_meshes) {
                     for (S32 j = 0; j < tile.gpu_data.meshes.count; j += 1) {
                         material.maps[MATERIAL_MAP_DIFFUSE].color = colors[current_color];
                         current_color = (current_color + 1) % 13;
@@ -338,15 +372,14 @@ void VtpkDisplayFile(const char *filename, Screen screen) {
                         }
                     }
                 }
+                if (render_options.show_textures) {
+                    for (S32 j = 0; j < tiles.v[i].gpu_data.textures.count; j += 1) {
+                        // OpenGL uses a y-inverted coordinate system. Flip the texture here.
+                        DrawTextureRec(tiles.v[i].gpu_data.textures.v[j].texture, (Rectangle) {.x = 0, .y = 0, .width = DRAW_TILE_PIXEL_COUNT, .height = -DRAW_TILE_PIXEL_COUNT},
+                                     (Vector2){.x = 0, .y = DRAW_TILE_PIXEL_COUNT}, ORANGE);
+                    }
+                }
                 rlPopMatrix();
-
-                // for (S32 j = 0; j < tile.gpu_data.meshes.count; j += 1) {
-                //     DrawMesh(tile.gpu_data.meshes.v[j], material, transform);
-                // }
-                // for (S32 j = 0; j < tiles.v[i].gpu_data.textures.count; j += 1) {
-                //    DrawTextureV(tiles.v[i].gpu_data.textures.v[j].texture,
-                //                 (Vector2){0, 0}, WHITE);
-                //}
             }
         }
         EndModeTile();
