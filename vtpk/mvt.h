@@ -327,9 +327,6 @@ static void MultiLineStringFromProtobufData(const MVT_ProtobufData data,
             PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
-            assert(instruction.count == 1);
-            PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
-                                                &coords->texture_coords);
             if (encountered_move_to) {
                 const S32 line_string_coordinate_count =
                     coords->texture_coords.count - line_string_start;
@@ -339,6 +336,9 @@ static void MultiLineStringFromProtobufData(const MVT_ProtobufData data,
                                        .count = line_string_coordinate_count});
                 line_string_start = coords->texture_coords.count;
             }
+            assert(instruction.count == 1);
+            PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
+                                                &coords->texture_coords);
             encountered_move_to = true;
         } break;
         case LINE_TO: {
@@ -481,16 +481,17 @@ static void LayerTextureFromCoords(RenderTexture2DArray *textures,
             const Range multi_line_string =
                 layer_coords->multi_line_strings.d[multi_line_string_index];
             for (S32 line_string_index = multi_line_string.min;
-                 line_string_index < multi_line_string.count; line_string_index += 1) {
+                 line_string_index < multi_line_string.min + multi_line_string.count;
+                 line_string_index += 1) {
                 const Range line_string = layer_coords->line_strings.d[line_string_index];
-                for (S32 k = line_string.min; k < line_string.count - 1; k += 1) {
+                for (S32 k = line_string.min; k < line_string.min + line_string.count - 1;
+                     k += 1) {
                     Vector2 a = Vector2FromCoord2(layer_coords->texture_coords.d[k]);
                     a.x *= scale_factor;
                     a.y *= scale_factor;
                     Vector2 b = Vector2FromCoord2(layer_coords->texture_coords.d[k + 1]);
                     b.x *= scale_factor;
                     b.y *= scale_factor;
-                    DrawCircleV(a, 1.f, GOLD);
                     DrawLineEx(a, b, 1.f, RED);
                 }
             }
