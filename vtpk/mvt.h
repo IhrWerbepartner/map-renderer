@@ -28,6 +28,16 @@ enum GeometryType {
     GEOMETRY_TYPE_POLYGON = 3,
 };
 
+typedef enum MVT_ProtobufLayerField MVT_ProtobufLayerField;
+enum MVT_ProtobufLayerField {
+    LAYER_FIELD_VERSION = 15,
+    LAYER_FIELD_NAME = 1,
+    LAYER_FIELD_FEATURES = 2,
+    LAYER_FIELD_KEYS = 3,
+    LAYER_FIELD_VALUES = 4,
+    LAYER_FIELD_EXTENT = 5,
+};
+
 typedef enum WindingOrder WindingOrder;
 enum WindingOrder {
     CLOCKWISE,
@@ -88,15 +98,15 @@ struct VectorTileGPU_Data {
     String8Slice layer_names;
 };
 
-typedef enum PlotterCommand PlotterCommand;
-enum PlotterCommand {
+typedef enum MVT_PlotterCommand MVT_PlotterCommand;
+enum MVT_PlotterCommand {
     MOVE_TO = 1,    // 2 parameters (dX, dY)
     LINE_TO = 2,    // 2 parameters (dX, dY)
     CLOSE_PATH = 7, // 0 parameters    -
 };
 
-typedef struct PlotterInstruction PlotterInstruction;
-struct PlotterInstruction {
+typedef struct MVT_PlotterInstruction MVT_PlotterInstruction;
+struct MVT_PlotterInstruction {
     U32 count;
     PlotterCommand command;
 };
@@ -581,17 +591,6 @@ static void LayerMeshFromCoords(Arena *arena, MeshArray *meshes,
     temp_arena_memory_end(scratch);
 }
 
-static void ComputeGpuData(Arena *arena, MeshArray *meshes,
-                           RenderTexture2DArray *textures, String8Array *names,
-                           LayerCoords *layer_coords, U32 extent) {
-    if (layer_coords->texture_coords.count > 0) {
-        LayerTextureFromCoords(textures, layer_coords, extent);
-    }
-    if (layer_coords->mesh_coords.count > 0) {
-        LayerMeshFromCoords(arena, meshes, layer_coords, extent);
-    }
-}
-
 // parse a MVT and store it as a mesh/texture on the arena given.
 static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData data) {
     Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
@@ -616,35 +615,35 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
             saved_ip = ip;
             const ProtobufTag layer_field = TagFromProtobufData(data, &ip);
             switch (layer_field.field_number) {
-            case 1: {
+            case LAYER_FIELD_NAME: {
                 assert(layer_field.wire_type == LEN);
                 const String8 layer_name = String8FromProtobufData(data, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
-            case 2: {
+            case LAYER_FIELD_FEATURES: {
                 assert(layer_field.wire_type == LEN);
                 const U32 feature_size = U32FromVarInt128(data, &ip);
                 ProtobufParseFeature(data, layer_coords, feature_size, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
-            case 3: {
+            case LAYER_FIELD_KEYS: {
                 assert(layer_field.wire_type == LEN);
                 const String8 key_name = String8FromProtobufData(data, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
-            case 4: {
+            case LAYER_FIELD_VALUES: {
                 assert(layer_field.wire_type == LEN);
                 const U32 value_size = U32FromVarInt128(data, &ip);
                 assert(value_size > 0);
                 ProtobufParseValue(data, value_size, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
-            case 5: {
+            case LAYER_FIELD_EXTENT: {
                 assert(layer_field.wire_type == VARINT);
                 extent = U32FromVarInt128(data, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
-            case 15: {
+            case LAYER_FIELD_VERSION: {
                 assert(layer_field.wire_type == VARINT);
                 const U32 version = U32FromVarInt128(data, &ip);
                 assert(version == 2);
@@ -656,11 +655,16 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
             assert(saved_ip < ip); // ensure we are making progress
         }
         assert(saved_ip < ip); // ensure we are making progress
+
+        // compute the data we need on the GPU
         if (layer_coords->mesh_coords.count > 0 ||
             layer_coords->texture_coords.count > 0) {
-            assert(layer_coords->mesh_coords.count > 0 ||
-                   layer_coords->texture_coords.count > 0);
-            ComputeGpuData(arena, &meshes, &textures, &names, layer_coords, extent);
+            if (layer_coords->texture_coords.count > 0) {
+                LayerTextureFromCoords(textures, layer_coords, extent);
+            }
+            if (layer_coords->mesh_coords.count > 0) {
+                LayerMeshFromCoords(arena, meshes, layer_coords, extent);
+            }
         }
         parsed_layers += 1;
         if (parsed_layers == layer_count) {

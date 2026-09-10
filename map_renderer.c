@@ -47,6 +47,7 @@ int main(int argc, char **argv) {
     //--------------------------------------------------------------------------------------
     const Screen screen = {.width = 2560, .height = 1440};
     SetTraceLogLevel(LOG_INFO);
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
     const String8 map_file = String8FromCString(argv[1]);
 
     if (String8EndsWith(map_file, String8FromCString(".geojson")) ||
