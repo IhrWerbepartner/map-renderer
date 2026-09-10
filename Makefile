@@ -15,7 +15,7 @@ run: $(EXE_NAME)
 	./$(EXE_NAME) $(GEO_FILE)
 
 windows: $(SOURCE_FILES)
-	zig cc -o render_debug.exe map_renderer.c -I $(WINDOWS_INCLUDES) -lopengl32 -lgdi32 -lwinmm -g -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DNOGDI -DNOUSER
+	zig cc -o render_debug.exe map_renderer.c -I $(WINDOWS_INCLUDES) -lopengl32 -lgdi32 -lwinmm -g -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DNOGDI -DNOUSER -DDEBUG
 
 windows-optimized: $(SOURCE_FILES)
 	zig cc -o render_release.exe map_renderer.c -I $(WINDOWS_INCLUDES) -lopengl32 -lgdi32 -lwinmm -g -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DNOGDI -DNOUSER -O2
