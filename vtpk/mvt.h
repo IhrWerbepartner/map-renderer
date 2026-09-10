@@ -108,7 +108,7 @@ enum MVT_PlotterCommand {
 typedef struct MVT_PlotterInstruction MVT_PlotterInstruction;
 struct MVT_PlotterInstruction {
     U32 count;
-    PlotterCommand command;
+    MVT_PlotterCommand command;
 };
 
 typedef struct MVT_Plotter MVT_Plotter;
@@ -116,8 +116,8 @@ struct MVT_Plotter {
     S32 pos_x, pos_y;
 };
 
-static PlotterInstruction InstructionFromCommandInteger(U32 command_integer) {
-    return (PlotterInstruction){.command = command_integer & bitmask3,
+static MVT_PlotterInstruction InstructionFromCommandInteger(U32 command_integer) {
+    return (MVT_PlotterInstruction){.command = command_integer & bitmask3,
                                 .count = command_integer >> 3};
 }
 
@@ -146,7 +146,7 @@ static U32 U32FromVarInt128(MVT_ProtobufData data, U64 *ip) {
     return safe_cast_u32(DecodeVarInt128(data, 5, ip));
 }
 
-static PlotterInstruction PlotterInstructionFromProtobufData(MVT_ProtobufData data,
+static MVT_PlotterInstruction PlotterInstructionFromProtobufData(MVT_ProtobufData data,
                                                              U64 *ip) {
     const U32 command_integer = U32FromVarInt128(data, ip);
     return InstructionFromCommandInteger(command_integer);
@@ -278,7 +278,7 @@ static void MultiPolygonFromProtobufData(const MVT_ProtobufData data, LayerCoord
     S32 polygon_ring_start = coords->polygons.count;
     S32 polygon_vertex_start = coords->mesh_coords.count;
     for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
-        const PlotterInstruction instruction =
+        const MVT_PlotterInstruction instruction =
             PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
@@ -333,7 +333,7 @@ static void MultiLineStringFromProtobufData(const MVT_ProtobufData data,
     const S32 multi_line_string_start = coords->line_strings.count;
     bool encountered_move_to = false;
     for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
-        const PlotterInstruction instruction =
+        const MVT_PlotterInstruction instruction =
             PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
@@ -381,7 +381,7 @@ static void PointFromProtobufData(const MVT_ProtobufData data, LayerCoords *coor
     MVT_Plotter plotter = {0};
     const S32 point_start = coords->texture_coords.count;
     for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
-        const PlotterInstruction instruction =
+        const MVT_PlotterInstruction instruction =
             PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
@@ -660,10 +660,10 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
         if (layer_coords->mesh_coords.count > 0 ||
             layer_coords->texture_coords.count > 0) {
             if (layer_coords->texture_coords.count > 0) {
-                LayerTextureFromCoords(textures, layer_coords, extent);
+                LayerTextureFromCoords(&textures, layer_coords, extent);
             }
             if (layer_coords->mesh_coords.count > 0) {
-                LayerMeshFromCoords(arena, meshes, layer_coords, extent);
+                LayerMeshFromCoords(arena, &meshes, layer_coords, extent);
             }
         }
         parsed_layers += 1;
