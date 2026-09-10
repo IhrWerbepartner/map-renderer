@@ -6,6 +6,8 @@ samples/RhodeIsland.ldgeojson
 
 *.rdi
 *.hexproj
+*.exe
+*.pdb
 
 map-renderer
 unoptimized-map-renderer
