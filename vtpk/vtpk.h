@@ -1,6 +1,7 @@
 #include "../arena.c"
 #include "../base.h"
 #include "../vendor/raymath.h"
+#include "mvt.h"
 #include "vtpk_reader.h"
 #include <assert.h>
 #include <math.h>
@@ -210,12 +211,14 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
 }
 
 static Matrix ModelTransformFromCoords(VectorTileCoordinate coords,
+                                       U32 units_per_tile_current,
                                        U32 units_per_tile_max) {
+    const F32 scaling = units_per_tile_max / (F32)units_per_tile_current;
     const F32 world_pixel_size = (F32)units_per_tile_max * exp2f((F32)coords.level);
     const F32 tile_world_size = world_pixel_size / exp2f((F32)coords.level);
-    const Matrix tile_position = MatrixTranslate((F32)coords.col * tile_world_size,
-                                                 (F32)coords.row * tile_world_size, 0.0f);
-    return tile_position;
+    return MatrixCompose((Vector3){(F32)coords.col * tile_world_size,
+                                   (F32)coords.row * tile_world_size, 0.0f},
+                         QuaternionIdentity(), (Vector3){scaling, scaling, 1.f});
 }
 
 static void DrawWorldGrid(Camera2D camera, Screen screen, F32 gridSize, Color gridColor,
@@ -283,7 +286,6 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
     VtpkFile *vtpk_file = VtpkParseFile(scratch.arena, filename);
     vtpk_file->bounding_box = (AABB){min_S32, min_S32, max_S32, max_S32};
 
-    const S32 tile_units_max = 512;
     TileCamera camera = ResetTileCamera(screen);
 
     const S32 draw_cache_size = DRAW_CACHE_SIZE;
@@ -334,19 +336,19 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
             for (S32 i = 0; i < tiles.count; i += 1) {
                 VectorTileHandle tile = tiles.v[i];
                 assert(tile.status == DATA_PRESENT);
-                const Matrix transform =
-                    ModelTransformFromCoords(tile.coordinate, tile_units_max);
-                rlPushMatrix();
-                rlLoadIdentity();
-                rlMultMatrixf(MatrixToFloat(transform));
                 if (render_options.show_meshes) {
+                    const Matrix mesh_transform = ModelTransformFromCoords(
+                        tile.coordinate, MVT_MESH_SIZE, DRAW_TILE_PIXEL_COUNT);
+                    rlPushMatrix();
+                    rlLoadIdentity();
+                    rlMultMatrixf(MatrixToFloat(mesh_transform));
                     for (S32 j = 0; j < tile.gpu_data.meshes.count; j += 1) {
                         material.maps[MATERIAL_MAP_DIFFUSE].color = colors[current_color];
                         current_color = (current_color + 1) % 13;
-                        mesh_pos.x = transform.m12;
-                        mesh_pos.y = transform.m13;
-                        mesh_pos.z = transform.m14;
-                        DrawMesh(tile.gpu_data.meshes.v[j], material, MatrixIdentity());
+                        mesh_pos.x = mesh_transform.m12;
+                        mesh_pos.y = mesh_transform.m13;
+                        mesh_pos.z = mesh_transform.m14;
+                        DrawMesh(tile.gpu_data.meshes.v[j], material, MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
                         if (render_options.show_bounding_box) {
                             BoundingBox bbox =
                                 GetMeshBoundingBox(tile.gpu_data.meshes.v[j]);
@@ -371,15 +373,27 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                                      screen_pos_max.x, screen_pos_max.y);
                         }
                     }
+                    rlPopMatrix();
                 }
                 if (render_options.show_textures) {
+                    const Matrix texture_transform = ModelTransformFromCoords(
+                        tile.coordinate, MVT_TEXTURE_SIZE, DRAW_TILE_PIXEL_COUNT);
+                    rlPushMatrix();
+                    rlLoadIdentity();
+                    rlMultMatrixf(MatrixToFloat(texture_transform));
                     for (S32 j = 0; j < tiles.v[i].gpu_data.textures.count; j += 1) {
-                        // OpenGL uses a y-inverted coordinate system. Flip the texture here.
-                        DrawTextureRec(tiles.v[i].gpu_data.textures.v[j].texture, (Rectangle) {.x = 0, .y = 0, .width = DRAW_TILE_PIXEL_COUNT, .height = -DRAW_TILE_PIXEL_COUNT},
-                                     (Vector2){.x = 0, .y = DRAW_TILE_PIXEL_COUNT}, ORANGE);
+                        // OpenGL uses a y-inverted coordinate system. Flip the texture
+                        // here.
+                        DrawTextureRec(tiles.v[i].gpu_data.textures.v[j].texture,
+                                       (Rectangle){.x = 0,
+                                                   .y = 0,
+                                                   .width = MVT_TEXTURE_SIZE,
+                                                   .height = -MVT_TEXTURE_SIZE},
+                                       (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE},
+                                       ORANGE);
                     }
+                    rlPopMatrix();
                 }
-                rlPopMatrix();
             }
         }
         EndModeTile();

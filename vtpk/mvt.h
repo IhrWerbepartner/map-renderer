@@ -10,6 +10,9 @@
 #include <raylib.h>
 #include <stdbool.h>
 
+#define MVT_TEXTURE_SIZE 4096
+#define MVT_MESH_SIZE 4096
+
 typedef struct MVT_ProtobufData MVT_ProtobufData;
 struct MVT_ProtobufData {
     U8 *v;
@@ -118,7 +121,7 @@ struct MVT_Plotter {
 
 static MVT_PlotterInstruction InstructionFromCommandInteger(U32 command_integer) {
     return (MVT_PlotterInstruction){.command = command_integer & bitmask3,
-                                .count = command_integer >> 3};
+                                    .count = command_integer >> 3};
 }
 
 static S32 ParameterIntegerFromZigzagInteger(U32 zigzag_value) {
@@ -147,7 +150,7 @@ static U32 U32FromVarInt128(MVT_ProtobufData data, U64 *ip) {
 }
 
 static MVT_PlotterInstruction PlotterInstructionFromProtobufData(MVT_ProtobufData data,
-                                                             U64 *ip) {
+                                                                 U64 *ip) {
     const U32 command_integer = U32FromVarInt128(data, ip);
     return InstructionFromCommandInteger(command_integer);
 }
@@ -468,48 +471,40 @@ static LayerCoords *CreateNewLayer(Arena *arena, S32 layer_size) {
     return layer;
 }
 
-static void LayerTextureFromCoords(RenderTexture2DArray *textures,
-                                   LayerCoords *layer_coords, U32 tile_extent) {
-    const S32 texture_size = 512;
-    const F32 scale_factor = (F32)texture_size / (F32)tile_extent;
-    const RenderTexture2D texture = LoadRenderTexture(texture_size, texture_size);
-    BeginTextureMode(texture);
-    ClearBackground(BLANK);
-    {
-        for (S32 i = 0; i < layer_coords->multi_points.count; i += 1) {
-            const Range multi_point = layer_coords->multi_points.d[i];
-            for (S32 j = multi_point.min; j < multi_point.count; j += 1) {
-                Coord2 point = layer_coords->texture_coords.d[j];
-                point.x *= scale_factor;
-                point.y *= scale_factor;
-                DrawCircleV(Vector2FromCoord2(point), 5.f, GREEN);
-            }
+static void LayerTextureFromCoords(LayerCoords *layer_coords, U32 tile_extent) {
+    const F32 scale_factor = (F32)MVT_TEXTURE_SIZE / (F32)tile_extent;
+    for (S32 i = 0; i < layer_coords->multi_points.count; i += 1) {
+        const Range multi_point = layer_coords->multi_points.d[i];
+        for (S32 j = multi_point.min; j < multi_point.count; j += 1) {
+            Coord2 point = layer_coords->texture_coords.d[j];
+            point.x *= scale_factor;
+            point.y *= scale_factor;
+            DrawCircleV(Vector2FromCoord2(point), 5.f, GREEN);
         }
-        for (S32 multi_line_string_index = 0;
-             multi_line_string_index < layer_coords->multi_line_strings.count;
-             multi_line_string_index += 1) {
-            const Range multi_line_string =
-                layer_coords->multi_line_strings.d[multi_line_string_index];
-            for (S32 line_string_index = multi_line_string.min;
-                 line_string_index < multi_line_string.min + multi_line_string.count;
-                 line_string_index += 1) {
-                const Range line_string = layer_coords->line_strings.d[line_string_index];
-                for (S32 k = line_string.min; k < line_string.min + line_string.count - 1;
-                     k += 1) {
-                    Vector2 a = Vector2FromCoord2(layer_coords->texture_coords.d[k]);
-                    a.x *= scale_factor;
-                    a.y *= scale_factor;
-                    Vector2 b = Vector2FromCoord2(layer_coords->texture_coords.d[k + 1]);
-                    b.x *= scale_factor;
-                    b.y *= scale_factor;
-                    DrawLineEx(a, b, 1.f, RED);
-                }
+    }
+    for (S32 multi_line_string_index = 0;
+         multi_line_string_index < layer_coords->multi_line_strings.count;
+         multi_line_string_index += 1) {
+        const Range multi_line_string =
+            layer_coords->multi_line_strings.d[multi_line_string_index];
+        for (S32 line_string_index = multi_line_string.min;
+             line_string_index < multi_line_string.min + multi_line_string.count;
+             line_string_index += 1) {
+            const Range line_string = layer_coords->line_strings.d[line_string_index];
+            for (S32 k = line_string.min; k < line_string.min + line_string.count - 1;
+                 k += 1) {
+                Vector2 a = Vector2FromCoord2(layer_coords->texture_coords.d[k]);
+                a.x *= scale_factor;
+                a.y *= scale_factor;
+                Vector2 b = Vector2FromCoord2(layer_coords->texture_coords.d[k + 1]);
+                b.x *= scale_factor;
+                b.y *= scale_factor;
+                DrawLineEx(a, b, 5.f, RED);
             }
         }
     }
-    EndTextureMode();
-    RenderTexture2DArrayPush(textures, texture);
 }
+
 static Mesh MeshFromTriangles(Arena *arena, const TriangleArray *triangles,
                               const Coord2Slice coords, F32 scale_factor) {
 
@@ -546,8 +541,7 @@ static Mesh MeshFromTriangles(Arena *arena, const TriangleArray *triangles,
 static void LayerMeshFromCoords(Arena *arena, MeshArray *meshes,
                                 LayerCoords *layer_coords, U32 tile_extent) {
     Temp_Arena_Memory scratch = GetScratch();
-    const S32 mesh_size = 512;
-    const F32 scale_factor = (F32)mesh_size / (F32)tile_extent;
+    const F32 scale_factor = (F32)MVT_MESH_SIZE / (F32)tile_extent;
     TriangleArray triangles = TriangleArrayNew(
         scratch.arena, layer_coords->mesh_coords.count *
                            2); // account for some triangulation that might violate
@@ -596,9 +590,15 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
     Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
     S32 layer_count = LayerCount(data);
     DEBUG_MSG("layer count: %d\n", layer_count);
+
     MeshArray meshes = MeshArrayNew(arena, layer_count);
     RenderTexture2DArray textures = RenderTexture2DArrayNew(arena, layer_count);
     String8Array names = String8ArrayNew(arena, layer_count);
+
+    const RenderTexture2D texture = LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
+    BeginTextureMode(texture);
+    ClearBackground(BLANK);
+
     U64 ip = 0;
     S32 parsed_layers = 0;
     while (ip < data.size) {
@@ -660,7 +660,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
         if (layer_coords->mesh_coords.count > 0 ||
             layer_coords->texture_coords.count > 0) {
             if (layer_coords->texture_coords.count > 0) {
-                LayerTextureFromCoords(&textures, layer_coords, extent);
+                LayerTextureFromCoords(layer_coords, extent);
             }
             if (layer_coords->mesh_coords.count > 0) {
                 LayerMeshFromCoords(arena, &meshes, layer_coords, extent);
@@ -671,6 +671,8 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
             assert(ip == data.size);
         }
     }
+    EndTextureMode();
+    RenderTexture2DArrayPush(&textures, texture);
     assert(meshes.count > 0 || textures.count > 0);
     temp_arena_memory_end(scratch);
     return (VectorTileGPU_Data){MeshSliceFromArray(&meshes),
