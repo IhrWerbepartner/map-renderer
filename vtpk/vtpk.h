@@ -28,6 +28,7 @@ struct VTPK_RenderOptions {
     bool show_textures;
 };
 
+#ifdef DEBUG
 static void PrintMissingTiles(S32Slice s, QuadTreeNodeArray quad_tree) {
     fprintf(stderr, "[");
     for (S32 i = 0; i < s.count; i += 1) {
@@ -39,6 +40,7 @@ static void PrintMissingTiles(S32Slice s, QuadTreeNodeArray quad_tree) {
     }
     fprintf(stderr, "]\n");
 }
+#endif
 
 // returns a []S32 with all indices of the quad_tree that are visible but not currently in
 // the cache
@@ -84,8 +86,8 @@ MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache, S32 zoom_level
         QuadTreeFind(QuadTreeNodeSliceFromArray(&vtpk_file->quad_tree),
                      vtpk_file->root_node, bbox, zoom_level, &visible_tiles);
 #ifdef DEBUG
-        fprintf(stderr, "visible_tiles: ");
-        PrintMissingTiles(S32SliceFromArray(&visible_tiles), vtpk_file->quad_tree);
+        // fprintf(stderr, "visible_tiles: ");
+        // PrintMissingTiles(S32SliceFromArray(&visible_tiles), vtpk_file->quad_tree);
 #endif
         // TODO: it would be cool to get these indices in a sorted order
         // this makes intersecting them much cheaper.
@@ -94,8 +96,8 @@ MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache, S32 zoom_level
             arena_auto_close_latch.scratch.arena, S32SliceFromArray(&visible_tiles),
             VectorTileHandleSliceFromArray(&draw_cache->back_buffer));
 #ifdef DEBUG
-        fprintf(stderr, "missing_tiles: ");
-        PrintMissingTiles(missing_tile_indices, vtpk_file->quad_tree);
+        // fprintf(stderr, "missing_tiles: ");
+        // PrintMissingTiles(missing_tile_indices, vtpk_file->quad_tree);
 #endif
         VectorTileHandlesFromFile(vtpk_file, missing_tile_indices);
         for (S32 i = 0; i < missing_tile_indices.count; i += 1) {
@@ -110,14 +112,6 @@ MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache, S32 zoom_level
     Swap(VectorTileHandleArray, draw_cache->front_buffer, draw_cache->back_buffer);
     return VectorTileHandleSliceFromArray(&draw_cache->front_buffer);
 }
-
-// represents world space [0; 2^zoom - 1] X [0; 2^zoom - 1]. in integer coords to not
-// loose precision. maybe unecessary?
-typedef struct LonLat2 LonLat2;
-struct LonLat2 {
-    F32 lon, lat;
-};
-static LonLat2 LonLat2FromVector2(Vector2 vec) { return (LonLat2){vec.x, vec.y}; }
 
 typedef struct TileCamera TileCamera;
 struct TileCamera {
@@ -262,8 +256,8 @@ static void UpdateVisibleBoundingBox(VtpkFile *vtpk_file, TileCamera camera_tile
         const Vector2 world_top_left = GetScreenToWorld2D(Vector2Zero(), camera_2d);
         const Vector2 tile_top_left =
             Vector2Scale(world_top_left, 1.f / DRAW_TILE_PIXEL_COUNT);
-        TraceLog(LOG_INFO, "top_left tile: (col: %.1f, row: %.1f)", tile_top_left.x,
-                 tile_top_left.y);
+        // TraceLog(LOG_INFO, "top_left tile: (col: %.1f, row: %.1f)", tile_top_left.x,
+        // tile_top_left.y);
         vtpk_file->bounding_box.min_x = (S32)floorf(tile_top_left.x);
         vtpk_file->bounding_box.min_y = (S32)floorf(tile_top_left.y) - 1;
     }
@@ -272,8 +266,8 @@ static void UpdateVisibleBoundingBox(VtpkFile *vtpk_file, TileCamera camera_tile
             (Vector2){(F32)screen.width, (F32)screen.height}, camera_2d);
         const Vector2 tile_bot_right =
             Vector2Scale(world_bot_right, 1.f / DRAW_TILE_PIXEL_COUNT);
-        TraceLog(LOG_INFO, "bot_right tile: (col: %.0f, row: %.0f)",
-                 ceilf(tile_bot_right.x), ceilf(tile_bot_right.y));
+        // TraceLog(LOG_INFO, "bot_right tile: (col: %.0f, row: %.0f)",
+        // ceilf(tile_bot_right.x), ceilf(tile_bot_right.y));
         vtpk_file->bounding_box.max_x = (S32)floorf(tile_bot_right.x);
         vtpk_file->bounding_box.max_y = (S32)floorf(tile_bot_right.y) - 1;
     }
@@ -348,7 +342,9 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                         mesh_pos.x = mesh_transform.m12;
                         mesh_pos.y = mesh_transform.m13;
                         mesh_pos.z = mesh_transform.m14;
-                        DrawMesh(tile.gpu_data.meshes.v[j], material, MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
+                        DrawMesh(
+                            tile.gpu_data.meshes.v[j], material,
+                            MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
                         if (render_options.show_bounding_box) {
                             BoundingBox bbox =
                                 GetMeshBoundingBox(tile.gpu_data.meshes.v[j]);
@@ -389,8 +385,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                                                    .y = 0,
                                                    .width = MVT_TEXTURE_SIZE,
                                                    .height = -MVT_TEXTURE_SIZE},
-                                       (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE},
-                                       ORANGE);
+                                       (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE}, ORANGE);
                     }
                     rlPopMatrix();
                 }
@@ -398,18 +393,18 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
         }
         EndModeTile();
         //  --------------------- HUD -------------------------
-        DrawText(TextFormat("CURRENT ZOOM: %03.04f", camera.zoom), 640, 10, 20, RED);
+        DrawText(TextFormat("CURRENT ZOOM: %03.04f", camera.zoom), 640, 10, 20, BLACK);
         DrawText(TextFormat("CAMERA TARGET: [%03.04f, %03.04f]", camera.target.x,
                             camera.target.y),
-                 640, 40, 20, RED);
+                 640, 40, 20, BLACK);
         DrawFPS(640, 70);
         Vector2 mouseWorldPos =
             GetScreenToWorld2D(GetMousePosition(), Camera2DFromTileCamera(camera));
         DrawText(TextFormat("MOUSE POS : [%03.04f, %03.04f]", mouseWorldPos.x,
                             mouseWorldPos.y),
-                 100, 10, 20, RED);
-        DrawText(TextFormat("MESH POS: [%03.04f, %03.04f]", mesh_pos.x, mesh_pos.y), 640,
-                 100, 20, RED);
+                 100, 10, 20, BLACK);
+        DrawText(TextFormat("FRAME TIME: %f MS", Thousand(GetFrameTime())), 640, 100, 20,
+                 BLACK);
         EndDrawing();
         //----------------------------------------------------------------------------------
     }

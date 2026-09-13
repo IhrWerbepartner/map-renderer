@@ -10,7 +10,7 @@
 #include <raylib.h>
 #include <stdbool.h>
 
-#define MVT_TEXTURE_SIZE 4096
+#define MVT_TEXTURE_SIZE 2048
 #define MVT_MESH_SIZE 4096
 
 typedef struct MVT_ProtobufData MVT_ProtobufData;

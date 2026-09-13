@@ -11,6 +11,8 @@
 #include <raylib.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <time.h>
+
 
 typedef enum QuadTreeNodeType QuadTreeNodeType;
 enum QuadTreeNodeType {
@@ -357,11 +359,18 @@ static Arena *GpuDataArenaFromLevel(S32 level) {
 // indices into the quad tree
 static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indices) {
     Temp_Arena_Memory scratch = GetScratch();
+    // Map<filename, unzipped_data*> bundle_files
+    // U8 *unzippped_data = get(&map, filename)
     for (S32 i = 0; i < tile_indices.count; i += 1) {
         VectorTileHandle *tile = &file->quad_tree.d[tile_indices.v[i]].tile;
         if (tile->status == DATA_PRESENT) {
             continue;
         }
+        // READ AND DECOMPRESS PROTOBUF TILE DATA
+        clock_t decompress_start, decompress_end;
+        double decompress_cpu_time_seconds;
+
+        decompress_start = clock();
 
         const S32 tile_file_row = (tile->coordinate.row / 128) * 128;
         const S32 tile_file_col = (tile->coordinate.col / 128) * 128;
@@ -372,11 +381,23 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         assert(filename_size == 30);
         const U32 file_index = FileIndexFromFileName(file->archive, bundle_filename);
         const U64 file_size = UncompressedFileSize(file->archive, file_index);
-        unsigned char *file_content = arena_alloc(scratch.arena, file_size);
-        if (!mz_zip_reader_extract_to_mem(file->archive, file_index, file_content,
-                                          file_size, 0)) {
-            ERROR_MSG("can not open zip archive: '%s'\n",
-                      mz_zip_get_error_string(file->archive->m_last_error));
+        U8 *file_content = arena_alloc(scratch.arena, file_size);
+        {
+            clock_t tile_parse_start, tile_parse_end;
+            double tile_parse_cpu_time_seconds;
+
+            tile_parse_start = clock();
+            if (!mz_zip_reader_extract_to_mem(file->archive, file_index, file_content,
+                                              file_size, 0)) {
+                ERROR_MSG("can not open zip archive: '%s'\n",
+                          mz_zip_get_error_string(file->archive->m_last_error));
+            }
+            tile_parse_end = clock();
+            tile_parse_cpu_time_seconds =
+                ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
+            fprintf(stdout, "EXTRACTING FILE FOR TILE: c: %d, r: %d, l: %d: %f MS\n",
+                    tile->coordinate.col, tile->coordinate.row, tile->coordinate.level,
+                    Thousand(tile_parse_cpu_time_seconds));
         }
         const TileBundleFileHeader *header = (TileBundleFileHeader *)file_content;
         assert(header->version == 3);
@@ -392,6 +413,8 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         assert(header->legacy3 == 16384);
         assert(header->legacy4 == 5);
         assert(header->index_size == 131072);
+
+        // decompress (unsually gzip compressed) individual tile
         const TileIndexRecord compressed_mvt = TileIndexRecordFromIndex(
             header->tile_index[tile->coordinate.row % 128][tile->coordinate.col % 128]);
 
@@ -414,7 +437,8 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         if (err == MZ_OK) {
             err = mz_inflate(&stream, MZ_FINISH);
             mz_inflateEnd(&stream);
-            // mz_inflate with MZ_FINISH returns MZ_STREAM_END on successful completion
+            // mz_inflate with MZ_FINISH returns MZ_STREAM_END on successful
+            // completion
             if (err == MZ_STREAM_END) {
                 err = MZ_OK;
             }
@@ -423,8 +447,32 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
             ERROR_MSG("%s\n", mz_error(err));
         }
         assert(err == MZ_OK);
+        decompress_end = clock();
+        decompress_cpu_time_seconds =
+            ((double)(decompress_end - decompress_start)) / CLOCKS_PER_SEC;
+        fprintf(stdout, "DECOMPRESSING TILE: c: %d, r: %d, l: %d: %f MS\n",
+                tile->coordinate.col, tile->coordinate.row, tile->coordinate.level,
+                Thousand(decompress_cpu_time_seconds));
         Arena *gpu_data_arena = GpuDataArenaFromLevel(tile->coordinate.level);
-        tile->gpu_data = ParseMapboxVectorTile(gpu_data_arena, mvt_protobuf);
+
+        {
+            // PARSE TILE INTO GPU DATA
+            clock_t tile_parse_start, tile_parse_end;
+            double tile_parse_cpu_time_seconds;
+
+            tile_parse_start = clock();
+            // work done here
+            // ------------------------------------------------------------------
+            tile->gpu_data = ParseMapboxVectorTile(gpu_data_arena, mvt_protobuf);
+            // ------------------------------------------------------------------
+            tile_parse_end = clock();
+            tile_parse_cpu_time_seconds =
+                ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
+            fprintf(stdout, "PARSING TILE: c: %d, r: %d, l: %d: %f MS\n",
+                    tile->coordinate.col, tile->coordinate.row, tile->coordinate.level,
+                    Thousand(tile_parse_cpu_time_seconds));
+        }
+
         tile->status = DATA_PRESENT;
     }
     temp_arena_memory_end(scratch);

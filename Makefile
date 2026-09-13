@@ -1,7 +1,7 @@
-GEO_FILE=./samples/poly_test_2.json
+GEO_FILE=./samples/bmapv_vtpk_3857.vtpk
 EXE_NAME= map-renderer
 EXE_NAME_UNOPTIMIZED= unoptimized-map-renderer
-CFLAGS= -Wextra -Wall -Wundef -Wno-unused-function -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-enum -Werror=switch -Wconversion -DRAYMATH_USE_SIMD_INTRINSICS -march=native
+CFLAGS= -Wextra -Wall -Wundef -Wno-unused-function -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-enum -Werror=switch -Wconversion -DRAYMATH_USE_SIMD_INTRINSICS -march=native -finstrument-functions
 
 SOURCE_FILES= map_renderer.c arena.c base.h triangulate/earcut.h json_parser.h string8.h vtpk/vtpk.h vtpk/vtpk_reader.h vtpk/mvt.h
 WINDOWS_INCLUDES="C:\raylib\w64devkit\include" "C:\raylib\w64devkit\lib\libraylib.a" 

@@ -5,27 +5,30 @@
 #include <raylib.h>
 
 #include <stdint.h>
+#ifdef INTERNAL_ENABLE_PROFILE
+#define SPALL_AUTO_IMPLEMENTATION
+#include "vendor/spall_native_auto.h"
+#endif
 
 #define internal static
 #define global static
 
 #define DEBUG_MSG(...) fprintf(stderr, __VA_ARGS__);
 
-#define ERROR_MSG(...)                                                         \
-  fprintf(stderr, __VA_ARGS__);                                                \
-  exit(EXIT_FAILURE);
+#define ERROR_MSG(...)                                                                   \
+    fprintf(stderr, __VA_ARGS__);                                                        \
+    exit(EXIT_FAILURE);
 
-#define ASSERT(expr, ...)                                                      \
-  do {                                                                         \
-    if (!(expr)) {                                                             \
-      fprintf(stderr, __VA_ARGS__);                                            \
-      exit(EXIT_FAILURE);                                                      \
-    }                                                                          \
-  } while (0);
+#define ASSERT(expr, ...)                                                                \
+    do {                                                                                 \
+        if (!(expr)) {                                                                   \
+            fprintf(stderr, __VA_ARGS__);                                                \
+            exit(EXIT_FAILURE);                                                          \
+        }                                                                                \
+    } while (0);
 
-#define CROSS(v0, v1, v2)                                                      \
-  (((v1).x - (v0).x) * ((v2).y - (v0).y) -                                     \
-   ((v1).y - (v0).y) * ((v2).x - (v0).x))
+#define CROSS(v0, v1, v2)                                                                \
+    (((v1).x - (v0).x) * ((v2).y - (v0).y) - ((v1).y - (v0).y) * ((v2).x - (v0).x))
 
 #define DOT(v0, v1) ((v0).x * (v1).x + (v0).y * (v1).y)
 
@@ -63,33 +66,33 @@ global const F64 max_F64 = (F64)DBL_MAX;
 global const F64 min_F64 = -(F64)DBL_MAX;
 
 static U32 safe_cast_u32(U64 x) {
-  assert(x <= max_U32);
-  const U32 result = (U32)x;
-  return result;
+    assert(x <= max_U32);
+    const U32 result = (U32)x;
+    return result;
 }
 
 static S32 safe_cast_s32(S64 x) {
-  assert(x <= max_S32);
-  const S32 result = (S32)x;
-  return result;
+    assert(x <= max_S32);
+    const S32 result = (S32)x;
+    return result;
 }
 
 static S32 safe_cast_s32_from_u64(U64 x) {
-  assert(x <= (U32)max_S32);
-  const S32 result = (S32)x;
-  return result;
+    assert(x <= (U32)max_S32);
+    const S32 result = (S32)x;
+    return result;
 }
 
 static U64 safe_cast_u64_from_s32(S32 x) {
-  assert(x >= 0);
-  const U64 result = (U64)x;
-  return result;
+    assert(x >= 0);
+    const U64 result = (U64)x;
+    return result;
 }
 
 static S32 safe_cast_s32_from_u32(U32 x) {
-  assert(x <= (U32)max_S32);
-  const S32 result = (S32)x;
-  return result;
+    assert(x <= (U32)max_S32);
+    const S32 result = (S32)x;
+    return result;
 }
 
 global const U32 bitmask1 = 0x00000001;
@@ -158,79 +161,79 @@ global const U64 bitmask62 = 0x3fffffffffffffffull;
 global const U64 bitmask63 = 0x7fffffffffffffffull;
 global const U64 bitmask64 = 0xffffffffffffffffull;
 
-global const U32 bit1  = (1<<0);
-global const U32 bit2  = (1<<1);
-global const U32 bit3  = (1<<2);
-global const U32 bit4  = (1<<3);
-global const U32 bit5  = (1<<4);
-global const U32 bit6  = (1<<5);
-global const U32 bit7  = (1<<6);
-global const U32 bit8  = (1<<7);
-global const U32 bit9  = (1<<8);
-global const U32 bit10 = (1<<9);
-global const U32 bit11 = (1<<10);
-global const U32 bit12 = (1<<11);
-global const U32 bit13 = (1<<12);
-global const U32 bit14 = (1<<13);
-global const U32 bit15 = (1<<14);
-global const U32 bit16 = (1<<15);
-global const U32 bit17 = (1<<16);
-global const U32 bit18 = (1<<17);
-global const U32 bit19 = (1<<18);
-global const U32 bit20 = (1<<19);
-global const U32 bit21 = (1<<20);
-global const U32 bit22 = (1<<21);
-global const U32 bit23 = (1<<22);
-global const U32 bit24 = (1<<23);
-global const U32 bit25 = (1<<24);
-global const U32 bit26 = (1<<25);
-global const U32 bit27 = (1<<26);
-global const U32 bit28 = (1<<27);
-global const U32 bit29 = (1<<28);
-global const U32 bit30 = (1<<29);
-global const U32 bit31 = (1<<30);
-global const U32 bit32 = (1u<<31u);
+global const U32 bit1 = (1 << 0);
+global const U32 bit2 = (1 << 1);
+global const U32 bit3 = (1 << 2);
+global const U32 bit4 = (1 << 3);
+global const U32 bit5 = (1 << 4);
+global const U32 bit6 = (1 << 5);
+global const U32 bit7 = (1 << 6);
+global const U32 bit8 = (1 << 7);
+global const U32 bit9 = (1 << 8);
+global const U32 bit10 = (1 << 9);
+global const U32 bit11 = (1 << 10);
+global const U32 bit12 = (1 << 11);
+global const U32 bit13 = (1 << 12);
+global const U32 bit14 = (1 << 13);
+global const U32 bit15 = (1 << 14);
+global const U32 bit16 = (1 << 15);
+global const U32 bit17 = (1 << 16);
+global const U32 bit18 = (1 << 17);
+global const U32 bit19 = (1 << 18);
+global const U32 bit20 = (1 << 19);
+global const U32 bit21 = (1 << 20);
+global const U32 bit22 = (1 << 21);
+global const U32 bit23 = (1 << 22);
+global const U32 bit24 = (1 << 23);
+global const U32 bit25 = (1 << 24);
+global const U32 bit26 = (1 << 25);
+global const U32 bit27 = (1 << 26);
+global const U32 bit28 = (1 << 27);
+global const U32 bit29 = (1 << 28);
+global const U32 bit30 = (1 << 29);
+global const U32 bit31 = (1 << 30);
+global const U32 bit32 = (1u << 31u);
 
-global const U64 bit33 = (1ull<<32);
-global const U64 bit34 = (1ull<<33);
-global const U64 bit35 = (1ull<<34);
-global const U64 bit36 = (1ull<<35);
-global const U64 bit37 = (1ull<<36);
-global const U64 bit38 = (1ull<<37);
-global const U64 bit39 = (1ull<<38);
-global const U64 bit40 = (1ull<<39);
-global const U64 bit41 = (1ull<<40);
-global const U64 bit42 = (1ull<<41);
-global const U64 bit43 = (1ull<<42);
-global const U64 bit44 = (1ull<<43);
-global const U64 bit45 = (1ull<<44);
-global const U64 bit46 = (1ull<<45);
-global const U64 bit47 = (1ull<<46);
-global const U64 bit48 = (1ull<<47);
-global const U64 bit49 = (1ull<<48);
-global const U64 bit50 = (1ull<<49);
-global const U64 bit51 = (1ull<<50);
-global const U64 bit52 = (1ull<<51);
-global const U64 bit53 = (1ull<<52);
-global const U64 bit54 = (1ull<<53);
-global const U64 bit55 = (1ull<<54);
-global const U64 bit56 = (1ull<<55);
-global const U64 bit57 = (1ull<<56);
-global const U64 bit58 = (1ull<<57);
-global const U64 bit59 = (1ull<<58);
-global const U64 bit60 = (1ull<<59);
-global const U64 bit61 = (1ull<<60);
-global const U64 bit62 = (1ull<<61);
-global const U64 bit63 = (1ull<<62);
-global const U64 bit64 = (1ull<<63);
+global const U64 bit33 = (1ull << 32);
+global const U64 bit34 = (1ull << 33);
+global const U64 bit35 = (1ull << 34);
+global const U64 bit36 = (1ull << 35);
+global const U64 bit37 = (1ull << 36);
+global const U64 bit38 = (1ull << 37);
+global const U64 bit39 = (1ull << 38);
+global const U64 bit40 = (1ull << 39);
+global const U64 bit41 = (1ull << 40);
+global const U64 bit42 = (1ull << 41);
+global const U64 bit43 = (1ull << 42);
+global const U64 bit44 = (1ull << 43);
+global const U64 bit45 = (1ull << 44);
+global const U64 bit46 = (1ull << 45);
+global const U64 bit47 = (1ull << 46);
+global const U64 bit48 = (1ull << 47);
+global const U64 bit49 = (1ull << 48);
+global const U64 bit50 = (1ull << 49);
+global const U64 bit51 = (1ull << 50);
+global const U64 bit52 = (1ull << 51);
+global const U64 bit53 = (1ull << 52);
+global const U64 bit54 = (1ull << 53);
+global const U64 bit55 = (1ull << 54);
+global const U64 bit56 = (1ull << 55);
+global const U64 bit57 = (1ull << 56);
+global const U64 bit58 = (1ull << 57);
+global const U64 bit59 = (1ull << 58);
+global const U64 bit60 = (1ull << 59);
+global const U64 bit61 = (1ull << 60);
+global const U64 bit62 = (1ull << 61);
+global const U64 bit63 = (1ull << 62);
+global const U64 bit64 = (1ull << 63);
 
-#define radians_from_turns_f64(v) ((v)*(2*3.1415926535897))
-#define turns_from_radians_f64(v) ((v)/(2*3.1415926535897))
-#define degrees_from_turns_f64(v) ((v)*360.0)
-#define turns_from_degrees_f64(v) ((v)/360.0)
+#define radians_from_turns_f64(v) ((v) * (2 * 3.1415926535897))
+#define turns_from_radians_f64(v) ((v) / (2 * 3.1415926535897))
+#define degrees_from_turns_f64(v) ((v) * 360.0)
+#define turns_from_degrees_f64(v) ((v) / 360.0)
 #define degrees_from_radians_f64(v) (degrees_from_turns_f64(turns_from_radians_f64(v)))
 #define radians_from_degrees_f64(v) (radians_from_turns_f64(turns_from_degrees_f64(v)))
-#define tan_f64(v)    tan(radians_from_turns_f64(v))
+#define tan_f64(v) tan(radians_from_turns_f64(v))
 
 #define C_EPS 1.11e-16
 #define FP_EQUAL(s, t) (fabs((s) - (t)) <= C_EPS)
@@ -249,36 +252,36 @@ global const U64 bit64 = (1ull<<63);
 #define ClampBot(X, B) Max(X, B)
 #define ClampTB(A, X, B) (((X) < (A)) ? (A) : ((X) > (B)) ? (B) : (X))
 
-#define Swap(T, a, b)                                                          \
-  do {                                                                         \
-    T t__ = (a);                                                               \
-    (a) = (b);                                                                 \
-    (b) = t__;                                                                 \
-  } while (0)
+#define Swap(T, a, b)                                                                    \
+    do {                                                                                 \
+        T t__ = (a);                                                                     \
+        (a) = (b);                                                                       \
+        (b) = t__;                                                                       \
+    } while (0)
 
 typedef struct coord2 {
-  F64 x, y;
+    F64 x, y;
 } Coord2;
 
-#define Vector2FromCoord2(coord)                                               \
-  (Vector2) { .x = (F32)(coord).x, .y = (F32)(coord).y }
+#define Vector2FromCoord2(coord)                                                         \
+    (Vector2) { .x = (F32)(coord).x, .y = (F32)(coord).y }
 
 typedef struct Triangle Triangle;
 struct Triangle {
-  S32 a, b, c;
+    S32 a, b, c;
 };
 
 typedef struct Slice Slice;
 struct Slice {
-  S32 start;
-  S32 length;
+    S32 start;
+    S32 length;
 };
 
 // a range has a base and a count. Is a view into an array.
 typedef struct Range Range;
 struct Range {
-  S32 min;
-  S32 count;
+    S32 min;
+    S32 count;
 };
 
 DeclFixedArray(Coord2Array, Coord2);
@@ -290,7 +293,7 @@ DeclFixedArray(F64Array, F64);
 DeclFixedArray(RangeArray, Range);
 typedef struct Screen Screen;
 struct Screen {
-  S32 width, height;
+    S32 width, height;
 };
 
 static Arena arena1 = {0};

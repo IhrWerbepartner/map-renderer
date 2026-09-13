@@ -28,7 +28,10 @@ int main(int argc, char **argv) {
         VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
     void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
-                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2GB, -1, 0);
+    if (backing_buffer == MAP_FAILED) {
+        ERROR_MSG("unable to map memory, errno: %d", errno);
+    }
 #endif
     arena_init(arenas[0], backing_buffer, backing_buffer_size);
 
@@ -37,10 +40,18 @@ int main(int argc, char **argv) {
         VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
     backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
-                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2GB, -1, 0);
+    if (backing_buffer == MAP_FAILED) {
+        ERROR_MSG("unable to map memory");
+    }
 #endif
 
     arena_init(arenas[1], backing_buffer, backing_buffer_size);
+#ifdef INTERNAL_ENABLE_PROFILE
+    spall_auto_init((char *)"profile.spall");
+    int thread_id = 0;
+    spall_auto_thread_init(thread_id, SPALL_DEFAULT_BUFFER_SIZE);
+#endif
 
     //--------------------------------------------------------------------------------------
     // Initialization
@@ -66,5 +77,9 @@ int main(int argc, char **argv) {
     //--------------------------------------------------------------------------------------
     CloseWindow(); // Close window and OpenGL context
     //--------------------------------------------------------------------------------------
+#ifdef INTERNAL_ENABLE_PROFILE
+    spall_auto_thread_quit();
+    spall_auto_quit();
+#endif
     return 0;
 }
