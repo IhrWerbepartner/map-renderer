@@ -13,7 +13,6 @@
 #include <stdio.h>
 #include <time.h>
 
-
 typedef enum QuadTreeNodeType QuadTreeNodeType;
 enum QuadTreeNodeType {
     EMPTY = 0, // no TileIndexRecord exists
@@ -359,8 +358,11 @@ static Arena *GpuDataArenaFromLevel(S32 level) {
 // indices into the quad tree
 static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indices) {
     Temp_Arena_Memory scratch = GetScratch();
-    // Map<filename, unzipped_data*> bundle_files
-    // U8 *unzippped_data = get(&map, filename)
+    struct {
+        char *key;
+        U8 *value;
+    } *bundle_files_map;
+    sh_new_arena(bundle_files_map);
     for (S32 i = 0; i < tile_indices.count; i += 1) {
         VectorTileHandle *tile = &file->quad_tree.d[tile_indices.v[i]].tile;
         if (tile->status == DATA_PRESENT) {
@@ -381,12 +383,13 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         assert(filename_size == 30);
         const U32 file_index = FileIndexFromFileName(file->archive, bundle_filename);
         const U64 file_size = UncompressedFileSize(file->archive, file_index);
-        U8 *file_content = arena_alloc(scratch.arena, file_size);
-        {
+        U8 *file_content = shget(bundle_files_map, &bundle_filename);
+        if (file_content == NULL) {
             clock_t tile_parse_start, tile_parse_end;
             double tile_parse_cpu_time_seconds;
 
             tile_parse_start = clock();
+            file_content = arena_alloc(scratch.arena, file_size);
             if (!mz_zip_reader_extract_to_mem(file->archive, file_index, file_content,
                                               file_size, 0)) {
                 ERROR_MSG("can not open zip archive: '%s'\n",
@@ -398,6 +401,7 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
             fprintf(stdout, "EXTRACTING FILE FOR TILE: c: %d, r: %d, l: %d: %f MS\n",
                     tile->coordinate.col, tile->coordinate.row, tile->coordinate.level,
                     Thousand(tile_parse_cpu_time_seconds));
+            shput(bundle_files_map, &bundle_filename, file_content);
         }
         const TileBundleFileHeader *header = (TileBundleFileHeader *)file_content;
         assert(header->version == 3);
@@ -475,5 +479,6 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
 
         tile->status = DATA_PRESENT;
     }
+    shfree(bundle_files_map);
     temp_arena_memory_end(scratch);
 }
