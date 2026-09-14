@@ -5,110 +5,13 @@
 #include "../fixed-array.c"
 #include "../json_parser.h"
 #include "../string8.h"
-#include "../vendor/miniz.c"
 #include "mvt.h"
+#include "types.h"
 #include <assert.h>
 #include <raylib.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
-
-typedef enum QuadTreeNodeType QuadTreeNodeType;
-enum QuadTreeNodeType {
-    EMPTY = 0, // no TileIndexRecord exists
-    LEAF = 1,  // no children exist
-    INNER = 2, // node contains 4 children
-};
-
-// axis-aligned bounding-box
-typedef struct AABB AABB;
-struct AABB {
-    S32 min_x, min_y, max_x, max_y;
-};
-
-typedef struct VectorTileCoordinate VectorTileCoordinate;
-struct VectorTileCoordinate {
-    S32 row, col, level;
-};
-
-typedef enum VectorTileHandleStatus VectorTileHandleStatus;
-enum VectorTileHandleStatus {
-    DATA_INVALID = 0, // model data was never queried and therefore is not valid
-    DATA_PRESENT = 1, // model data is present
-    DATA_EVICTED = 2, // model data was present but was evicted from the cache
-                      // and is now invalid
-};
-
-// handle into cache for triangualted tiles
-typedef struct VectorTileHandle VectorTileHandle;
-struct VectorTileHandle {
-    VectorTileCoordinate coordinate;
-    VectorTileGPU_Data gpu_data;
-    S32 quad_tree_node;
-    VectorTileHandleStatus status;
-};
-DeclFixedArray(VectorTileHandleArray, VectorTileHandle);
-
-typedef struct QuadTreeNode QuadTreeNode;
-struct QuadTreeNode {
-    QuadTreeNodeType type;
-    S32 child_nw;
-    S32 child_ne;
-    S32 child_sw;
-    S32 child_se;
-    VectorTileHandle tile;
-};
-DeclFixedArray(QuadTreeNodeArray, QuadTreeNode);
-
-// ----------- .bundle file ------------
-typedef struct TileIndexRecord TileIndexRecord;
-struct TileIndexRecord {
-    U64 tile_offset;
-    U32 tile_size;
-};
-
-TileIndexRecord TileIndexRecordFromIndex(U64 index) {
-    const U8 gzip_header_size = 10;
-    return (TileIndexRecord){
-        .tile_offset = (index & bitmask40) + gzip_header_size,
-        .tile_size = safe_cast_u32(index >> 40) - gzip_header_size,
-    };
-}
-typedef struct TileBundleFileHeader TileBundleFileHeader;
-struct TileBundleFileHeader {
-    S32 version; // has to be 3
-    S32 record_count;
-    S32 max_tile_size;
-    S32 offset_byte_count;
-    S64 slack_space;
-    S64 file_size;
-    S64 user_header_offset;
-    S32 user_header_size;
-    S32 legacy1;
-    S32 legacy2;
-    S32 legacy3;
-    S32 legacy4;
-    S32 index_size;           // has to be 131072 (128 * 128 * 8)
-    U64 tile_index[128][128]; // bits 0..39 represent offset, 40..63 the size
-                              // (bytes) of a tile
-};
-
-typedef struct VtpkFileRootProperties VtpkFileRootProperties;
-struct VtpkFileRootProperties {
-    F64Array lod_resolutions;
-    F64 tile_info_origin_x, tile_info_origin_y;
-    U32 lod_min, lod_max;
-    U32 tile_info_cols, tile_info_rows;
-};
-
-typedef struct VtpkFile VtpkFile;
-struct VtpkFile {
-    mz_zip_archive *archive;
-    VtpkFileRootProperties root_propreties;
-    AABB bounding_box;
-    QuadTreeNodeArray quad_tree;
-    S32 root_node;
-};
 
 static unsigned char gpu_data_arena_level0to7_buf[MB(100)] = {0};
 static unsigned char gpu_data_arena_level8to12_buf[MB(300)] = {0};
@@ -227,6 +130,9 @@ static void QuadTreeFromJson(Arena *arena, VtpkFile *vtpk_file) {
     temp_arena_memory_end(json_scratch);
 }
 
+// ----------------------------------------------------------------
+// ----------------------- ROOT PROPERTIES ------------------------
+// ----------------------------------------------------------------
 static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     Temp_Arena_Memory json_scratch = GetScratchConflict(&arena, 1);
     const char *root_properties = "p12/root.json";
@@ -287,20 +193,218 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     // TODO: figure out wich properties we actually need.
 }
 
-VtpkFile *VtpkParseFile(Arena *arena, const char *filepath) {
+// ----------------------------------------------------------------
+// -----------------------STYLE INFORMATION -----------------------
+// ----------------------------------------------------------------
+static VT_SourceLayerType SourceLayerTypeFromString(String8 string) {
+    if (String8Equals(string, String8FromCString("fill"))) {
+        return FILL;
+    }
+    if (String8Equals(string, String8FromCString("line"))) {
+        return LINE;
+    }
+    if (String8Equals(string, String8FromCString("symbol"))) {
+        return SYMBOL;
+    }
+    if (String8Equals(string, String8FromCString("circle"))) {
+        return CIRCLE;
+    }
+    ERROR_MSG("unreachable");
+}
+
+static Color ColorFromString(String8 color) {
+    String8 prefix = String8FromCString("rgba(");
+    if (!String8StartsWith(color, prefix)) {
+        return BLANK;
+    }
+    const char *cursor = color.buf + prefix.len;
+    char *endptr;
+    U8 red = safe_cast_u8((U64)strtol(cursor, &endptr, 10));
+    cursor = endptr + 1; // skip ','
+    assert(*(cursor - 1) == ',');
+    U8 green = safe_cast_u8((U64)strtol(cursor, &endptr, 10));
+    cursor = endptr + 1; // skip ','
+    assert(*(cursor - 1) == ',');
+    U8 blue = safe_cast_u8((U64)strtol(cursor, &endptr, 10));
+    cursor = endptr + 1; // skip ','
+    assert(*(cursor - 1) == ',');
+    U8 alpha = (U8)(strtof(cursor, &endptr) * 255.f);
+    assert(endptr == color.buf + color.len - 1);
+    return (Color){red, green, blue, alpha};
+}
+
+static S32 ValueNodeFromPaint(const JsonNode *paint, VT_SourceLayerType layer_type,
+                              S64 filter_val, VT_LayerStyleNodeArray *nodes) {
+    S32 value_node = 0;
+    switch (layer_type) {
+    case FILL: {
+        const JsonNode *fill_color = JsonFindKey(paint, String8FromCString("fill-color"));
+        assert(fill_color->type == JSON_STRING);
+        Color color = ColorFromString(fill_color->text_value);
+        value_node = VT_LayerStyleNodeArrayPush(
+            nodes, (VT_LayerStyleNode){.type = FILTER_VALUE,
+                                       {.filter_val = {.value = filter_val,
+                                                       .paint = {.fill_color = color},
+                                                       .next = 0}}});
+    } break;
+    case LINE: {
+        const JsonNode *line_color = JsonFindKey(paint, String8FromCString("line-color"));
+        assert(line_color->type == JSON_STRING);
+        Color color = ColorFromString(line_color->text_value);
+        value_node = VT_LayerStyleNodeArrayPush(
+            nodes, (VT_LayerStyleNode){.type = FILTER_VALUE,
+                                       {.filter_val = {.value = filter_val,
+                                                       .paint = {.line_color = color},
+                                                       .next = 0}}});
+    } break;
+    case SYMBOL: {
+        // TODO: icon color represents what exactly? tint? the icon has a color by
+        // itself no?
+    } break;
+    case CIRCLE: {
+        const JsonNode *circle_color =
+            JsonFindKey(paint, String8FromCString("circle-color"));
+        assert(circle_color->type == JSON_STRING);
+        Color color = ColorFromString(circle_color->text_value);
+        value_node = VT_LayerStyleNodeArrayPush(
+            nodes, (VT_LayerStyleNode){.type = FILTER_VALUE,
+                                       {.filter_val = {.value = filter_val,
+                                                       .paint = {.circle_color = color},
+                                                       .next = 0}}});
+    } break;
+    default:
+        ERROR_MSG("unreachable");
+    }
+    return value_node;
+}
+
+static S32 LayerKeyFromSoureLayer(const VT_LayerStyleNodeSlice nodes, S32 first_child,
+                                  String8 key) {
+    S32 layer_filter_key = 0;
+    for (layer_filter_key = first_child; layer_filter_key;
+         layer_filter_key = nodes.v[layer_filter_key].filter_key.next) {
+        if (String8Equals(nodes.v[layer_filter_key].filter_key.key, key)) {
+            break;
+        }
+    }
+    return layer_filter_key;
+}
+
+// returns the index in the filter_nodes slice corresponding to the style.
+// 0 if not found.
+static S32 StyleFromFilteredLayer(VT_SourceLayerMap *layer_styles,
+                                  const VT_LayerStyleNodeSlice filter_nodes,
+                                  String8 layer, String8 filter_key, S64 filter_value) {
+    S64 layer_index = shgeti(layer_styles, layer.buf);
+    if (layer_index == -1) {
+        return 0;
+    }
+    S32 layer_filter_key = LayerKeyFromSoureLayer(
+        filter_nodes, layer_styles[layer_index].value.key_first, filter_key);
+    S32 value = 0;
+    for (value = filter_nodes.v[layer_filter_key].filter_key.value_first; value;
+         value = filter_nodes.v[value].filter_val.next) {
+        if (filter_nodes.v[value].filter_val.value == filter_value) {
+            return value;
+        }
+    }
+    return value;
+}
+
+// creats the lookup structure to identify the style by layer -> key -> value
+static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
+    Temp_Arena_Memory json_scratch = GetScratchConflict(&arena, 1);
+    const char *styles = "p12/resources/styles/root.json";
+    U32 file_index = FileIndexFromFileName(vtpk_file->archive, styles);
+    U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
+    char *file_content = arena_alloc(json_scratch.arena, file_size + 1);
+    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
+                                 file_size + 1, 0);
+
+    JsonNode *root = JsonNodeFromString(json_scratch.arena, file_content);
+    assert(root->type == JSON_OBJECT);
+    const JsonNode *layers = JsonFindKey(root, String8FromCString("layers"));
+    assert(layers->type == JSON_ARRAY);
+    vtpk_file->layer_styles = NULL;
+    sh_new_arena(vtpk_file->layer_styles);
+    VT_LayerStyleNodeArray filter_nodes =
+        VT_LayerStyleNodeArrayNew(arena, layers->children.count);
+    vtpk_file->layer_filters = filter_nodes;
+    VT_LayerStyleNodeArrayPush(&filter_nodes,
+                               (VT_LayerStyleNode){0}); // zero first entry.
+
+    for (JsonNode *layer_style = layers->children.first; layer_style != &json_node_null;
+         layer_style = layer_style->next) {
+        const JsonNode *source_layer =
+            JsonFindKey(layer_style, String8FromCString("source-layer"));
+        assert(source_layer->type == JSON_STRING);
+        S64 layer_index = shgeti(vtpk_file->layer_styles, source_layer->text_value.buf);
+
+        const JsonNode *layer_type = JsonFindKey(layer_style, String8FromCString("type"));
+        assert(layer_type->type == JSON_STRING);
+        const VT_SourceLayerType type = SourceLayerTypeFromString(layer_type->text_value);
+
+        const JsonNode *filter = JsonFindKey(layer_style, String8FromCString("filter"));
+        assert(filter->type == JSON_ARRAY);
+        assert(filter->children.count == 3);
+        const JsonNode *filter_key = filter->children.first->next;
+        assert(filter_key->type == JSON_STRING);
+        const JsonNode *filter_val = filter->children.last;
+        assert(filter_val->type == JSON_INTEGER);
+        if (layer_index == -1) {
+            const JsonNode *paint = JsonFindKey(layer_style, String8FromCString("paint"));
+            S32 value_node =
+                ValueNodeFromPaint(paint, type, filter_val->num.s_value, &filter_nodes);
+            S32 key_node = VT_LayerStyleNodeArrayPush(
+                &filter_nodes,
+                (VT_LayerStyleNode){
+                    .type = FILTER_KEY,
+                    {.filter_key = {.key = String8Clone(arena, filter_key->text_value),
+                                    .value_first = value_node,
+                                    .value_last = value_node,
+                                    .next = 0}}});
+
+            VT_SourceLayer new_layer =
+                (VT_SourceLayer){type, source_layer->text_value, key_node, key_node};
+            shput(vtpk_file->layer_styles, source_layer->text_value.buf, new_layer);
+        } else {
+            const JsonNode *paint = JsonFindKey(layer_style, String8FromCString("paint"));
+            S32 value_node =
+                ValueNodeFromPaint(paint, type, filter_val->num.s_value, &filter_nodes);
+            S32 layer_filter_key = LayerKeyFromSoureLayer(
+                VT_LayerStyleNodeSliceFromArray(&filter_nodes),
+                vtpk_file->layer_styles[layer_index].value.key_first,
+                filter_key->text_value);
+            if (layer_filter_key) {
+                filter_nodes.d[filter_nodes.d[layer_filter_key].filter_key.value_last]
+                    .filter_val.next = value_node;
+                filter_nodes.d[layer_filter_key].filter_key.value_last = value_node;
+            } else {
+                S32 key_node = VT_LayerStyleNodeArrayPush(
+                    &filter_nodes, (VT_LayerStyleNode){
+                                       .type = FILTER_KEY,
+                                       {.filter_key = {.key = String8Clone(
+                                                           arena, filter_key->text_value),
+                                                       .value_first = value_node,
+                                                       .value_last = value_node,
+                                                       .next = 0}}});
+                filter_nodes.d[layer_filter_key].filter_key.next = key_node;
+                vtpk_file->layer_styles[layer_index].value.key_last = key_node;
+            }
+        }
+    }
+    temp_arena_memory_end(json_scratch);
+}
+
+static VtpkFile *VtpkParseFile(Arena *arena, const char *filepath) {
     VtpkFile *vtpk_file = arena_alloc(arena, sizeof(VtpkFile));
     vtpk_file->archive = arena_alloc(arena, sizeof(mz_zip_archive));
     mz_zip_zero_struct(vtpk_file->archive);
     OpenZipArchive(vtpk_file->archive, filepath);
     assert(vtpk_file->archive != NULL);
-    {
-        // TILEMAP
-        QuadTreeFromJson(arena, vtpk_file);
-    }
-    {
-        // ROOT PROPERTIES
-        RootPropertiesFromJson(arena, vtpk_file);
-    }
+    QuadTreeFromJson(arena, vtpk_file);
+    RootPropertiesFromJson(arena, vtpk_file);
+    StyleFromJson(arena, vtpk_file);
     return vtpk_file;
 }
 

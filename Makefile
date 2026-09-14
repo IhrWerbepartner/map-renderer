@@ -23,13 +23,16 @@ windows-optimized: $(SOURCE_FILES)
 	zig cc -o render_release.exe map_renderer.c -I $(WINDOWS_INCLUDES) $(WINDOWS_LDFLAGS) $(WINDOWS_DEFINES) -g -O2
 
 release: $(SOURCE_FILES)
-	gcc $(CFLAGS) $(executable) $(LDFLAGS) -g -finstrument-functions map_renderer.c -o $(EXE_NAME) -O2
+	gcc $(CFLAGS) $(LDFLAGS) -g map_renderer.c -o $(EXE_NAME) -O2
+
+release-profile: $(SOURCE_FILES)
+	gcc $(CFLAGS) $(LDFLAGS) -g -finstrument-functions map_renderer.c -o $(EXE_NAME)_profile -O2 -DINTERNAL_ENABLE_PROFILE
 
 unoptimized: $(SOURCE_FILES)
 	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g -finstrument-functions map_renderer.c -o $(EXE_NAME_UNOPTIMIZED)
 
 release-stripped: $(SOURCE_FILES)
-	gcc $(CFLAGS) $(executable) $(LDFLAGS) map_renderer.c -o map-renderer-release-stripped -O2
+	gcc $(CFLAGS) $(LDFLAGS) map_renderer.c -o map-renderer-release-stripped -O2
 
 stat: $(EXE_NAME)
 	perf stat -d ./$(EXE_NAME) $(GEO_FILE)

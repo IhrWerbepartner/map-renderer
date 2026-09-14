@@ -1,3 +1,6 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wconversion"
 // SPDX-FileCopyrightText: © 2024 Colin Davidson <colrdavidson@gmail.com>
 // SPDX-License-Identifier: MIT
 
@@ -896,3 +899,4 @@ SPALL_NOINSTRUMENT void __cyg_profile_func_exit(void *fn, void *caller) {
 
 #endif
 #endif
+#pragma GCC diagnostic pop

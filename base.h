@@ -10,12 +10,6 @@
 #define STB_DS_IMPLEMENTATION
 #include "vendor/stb_ds.h"
 
-// profiling
-#ifdef INTERNAL_ENABLE_PROFILE
-#define SPALL_AUTO_IMPLEMENTATION
-#include "vendor/spall_native_auto.h"
-#endif
-
 #define internal static
 #define global static
 
@@ -64,7 +58,7 @@ typedef double F64;
 // global U64 max_U64 = 0xffffffffffffffffull;
 global const U32 max_U32 = 0xffffffff;
 // global U16 max_U16 = 0xffff;
-// global U8 max_U8 = 0xff;
+global U8 max_U8 = 0xff;
 //
 // global S64 max_S64 = (S64)0x7fffffffffffffffll;
 global const S32 max_S32 = (S32)0x7fffffff;
@@ -82,6 +76,12 @@ global const F64 min_F64 = -(F64)DBL_MAX;
 static U32 safe_cast_u32(U64 x) {
     assert(x <= max_U32);
     const U32 result = (U32)x;
+    return result;
+}
+
+static U8 safe_cast_u8(U64 x) {
+    assert(x <= max_U8);
+    const U8 result = (U8)x;
     return result;
 }
 

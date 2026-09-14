@@ -207,7 +207,7 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
 static Matrix ModelTransformFromCoords(VectorTileCoordinate coords,
                                        U32 units_per_tile_current,
                                        U32 units_per_tile_max) {
-    const F32 scaling = units_per_tile_max / (F32)units_per_tile_current;
+    const F32 scaling = (F32)units_per_tile_max / (F32)units_per_tile_current;
     const F32 world_pixel_size = (F32)units_per_tile_max * exp2f((F32)coords.level);
     const F32 tile_world_size = world_pixel_size / exp2f((F32)coords.level);
     return MatrixCompose((Vector3){(F32)coords.col * tile_world_size,

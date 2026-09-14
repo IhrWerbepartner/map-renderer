@@ -15,6 +15,12 @@
 #include <sys/mman.h>
 #endif
 
+// profiling
+#ifdef INTERNAL_ENABLE_PROFILE
+#define SPALL_AUTO_IMPLEMENTATION
+#include "vendor/spall_native_auto.h"
+#endif
+
 void usage(char *program_name) { printf("usage: %s <filepath>\n", program_name); }
 
 int main(int argc, char **argv) {
@@ -49,7 +55,7 @@ int main(int argc, char **argv) {
     arena_init(arenas[1], backing_buffer, backing_buffer_size);
 #ifdef INTERNAL_ENABLE_PROFILE
     spall_auto_init((char *)"profile.spall");
-    int thread_id = 0;
+    U32 thread_id = 0;
     spall_auto_thread_init(thread_id, SPALL_DEFAULT_BUFFER_SIZE);
 #endif
 

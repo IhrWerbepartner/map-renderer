@@ -2,10 +2,9 @@
 
 #include "../arena.c"
 #include "../base.h"
-#include "../fixed-array.c"
 #include "../string8.h"
 #include "../triangulate/earcut.h"
-#include "../vendor/raymath.h"
+#include "types.h"
 #include <assert.h>
 #include <raylib.h>
 #include <stdbool.h>
@@ -19,7 +18,6 @@ struct MVT_ProtobufData {
     U64 size;
 };
 
-DeclFixedArray(RenderTexture2DArray, RenderTexture2D);
 
 // implements the spec found here:
 // https://github.com/mapbox/vector-tile-spec/tree/master/2.1
@@ -90,16 +88,6 @@ struct LayerCoords {
     RangeArray multi_points;       // an index into coord for every (multi)-point.
 };
 
-DeclFixedArray(MeshArray, Mesh);
-//
-// SOA layout for vector tile data.
-// Name can determine if this layer should be drawn and how
-typedef struct VectorTileGPU_Data VectorTileGPU_Data;
-struct VectorTileGPU_Data {
-    MeshSlice meshes;
-    RenderTexture2DSlice textures;
-    String8Slice layer_names;
-};
 
 typedef enum MVT_PlotterCommand MVT_PlotterCommand;
 enum MVT_PlotterCommand {
@@ -418,9 +406,10 @@ static void ProtobufParseFeature(MVT_ProtobufData data, LayerCoords *coords,
         const ProtobufTag feature_field = TagFromProtobufData(data, ip);
         switch (feature_field.field_number) {
         case 1: {
-            // ID: skip for now (is optional anyway
+            // ID: skip for now (is optional anyway)
             assert(feature_field.wire_type == VARINT);
             const U64 id = U64FromVarInt128(data, ip);
+            (void)id;
         } break;
         case 2: {
             // TAGS: TODO skip for now
@@ -480,7 +469,7 @@ static void LayerTextureFromCoords(LayerCoords *layer_coords, U32 tile_extent) {
             Coord2 point = layer_coords->texture_coords.d[j];
             point.x *= scale_factor;
             point.y *= scale_factor;
-            DrawCircleV(Vector2FromCoord2(point), 5.f, GREEN);
+            DrawCircleV(Vector2FromCoord2(point), 15.f, GREEN);
         }
     }
     for (S32 multi_line_string_index = 0;
