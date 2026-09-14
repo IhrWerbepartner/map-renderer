@@ -8,8 +8,10 @@ samples/RhodeIsland.ldgeojson
 *.hexproj
 *.exe
 *.pdb
+*.spall
 
 map-renderer
+map-renderer-release-stripped
 unoptimized-map-renderer
 stripped_map-renderer
 ressources/

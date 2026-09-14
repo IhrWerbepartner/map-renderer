@@ -19,7 +19,7 @@
     return (typename){.count = 0, .capacity = capacity, .d = data};            \
   }                                                                            \
                                                                                \
-  __attribute__((always_inline)) inline void typename##Reset(typename *stck) { \
+  INTERNAL_FORCEINLINE inline void typename##Reset(typename *stck) { \
     stck->count = 0;                                                           \
   }                                                                            \
                                                                                \
@@ -28,7 +28,7 @@
     return stack->count;                                                       \
   }                                                                            \
                                                                                \
-  __attribute__((always_inline)) inline S32 typename##Push(typename *stack,    \
+  INTERNAL_FORCEINLINE inline S32 typename##Push(typename *stack,    \
                                                            type value) {       \
     if (stack->count >= stack->capacity) {                                     \
       fprintf(stderr, "Array overflow, capacity: %d reached here: %s:%d\n",    \
@@ -39,7 +39,7 @@
     return stack->count - 1;                                                   \
   }                                                                            \
                                                                                \
-  __attribute__((always_inline)) inline type typename##Pop(typename *stck) {   \
+  INTERNAL_FORCEINLINE inline type typename##Pop(typename *stck) {   \
     if (stck->count == 0) {                                                    \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
@@ -49,19 +49,19 @@
     return value;                                                              \
   }                                                                            \
                                                                                \
-  __attribute__((always_inline)) inline type typename##Peek(typename *stck) {  \
+  INTERNAL_FORCEINLINE inline type typename##Peek(typename *stck) {  \
     if (stck->count == 0) {                                                    \
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
     return stck->d[stck->count - 1];                                           \
   }                                                                            \
                                                                                \
-  __attribute__((always_inline)) inline type##Slice type##SliceFromArray(      \
+  INTERNAL_FORCEINLINE inline type##Slice type##SliceFromArray(      \
       typename *array) {                                                       \
     return (type##Slice){.v = array->d, .count = array->count};                \
   }                                                                            \
                                                                                \
-  __attribute__((always_inline)) inline type##Slice type##SliceFromArrayExt(   \
+  INTERNAL_FORCEINLINE inline type##Slice type##SliceFromArrayExt(   \
       typename *array, S32 start, S32 length) {                                \
     if (!array || start + length > array->count) {                             \
       fprintf(stderr,                                                          \
@@ -72,7 +72,7 @@
     return (type##Slice){.v = array->d + start, .count = length};              \
   }                                                                            \
                                                                                \
-  __attribute__((always_inline)) inline type##Slice type##SliceFromArrayStart( \
+  INTERNAL_FORCEINLINE inline type##Slice type##SliceFromArrayStart( \
       typename *array, S32 start) {                                            \
     if (!array || start >= array->count) {                                     \
       fprintf(stderr, "Slice too big, requested [%d..] array has count: %d\n", \

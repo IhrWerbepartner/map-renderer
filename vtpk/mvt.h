@@ -119,12 +119,13 @@ struct MVT_Plotter {
     S32 pos_x, pos_y;
 };
 
-static MVT_PlotterInstruction InstructionFromCommandInteger(U32 command_integer) {
+INTERNAL_FORCEINLINE inline static MVT_PlotterInstruction
+InstructionFromCommandInteger(U32 command_integer) {
     return (MVT_PlotterInstruction){.command = command_integer & bitmask3,
                                     .count = command_integer >> 3};
 }
 
-static S32 ParameterIntegerFromZigzagInteger(U32 zigzag_value) {
+INTERNAL_FORCEINLINE inline static S32 ParameterIntegerFromZigzagInteger(U32 zigzag_value) {
     return (S32)((zigzag_value >> 1) ^ (-(zigzag_value & 1)));
 }
 
@@ -141,15 +142,15 @@ static U64 DecodeVarInt128(const MVT_ProtobufData data, U32 allowed_bytes_read, 
     ERROR_MSG("invalid VarInt128 detected");
 }
 
-static U64 U64FromVarInt128(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static U64 U64FromVarInt128(MVT_ProtobufData data, U64 *ip) {
     return DecodeVarInt128(data, 10, ip);
 }
 
-static U32 U32FromVarInt128(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static U32 U32FromVarInt128(MVT_ProtobufData data, U64 *ip) {
     return safe_cast_u32(DecodeVarInt128(data, 5, ip));
 }
 
-static MVT_PlotterInstruction PlotterInstructionFromProtobufData(MVT_ProtobufData data,
+INTERNAL_FORCEINLINE inline static MVT_PlotterInstruction PlotterInstructionFromProtobufData(MVT_ProtobufData data,
                                                                  U64 *ip) {
     const U32 command_integer = U32FromVarInt128(data, ip);
     return InstructionFromCommandInteger(command_integer);
@@ -161,20 +162,20 @@ struct ProtobufTag {
     enum { VARINT = 0, I64 = 1, LEN = 2, SGROUP = 3, EGROUP = 4, I32 = 5 } wire_type;
 };
 
-static ProtobufTag TagFromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static ProtobufTag TagFromProtobufData(MVT_ProtobufData data, U64 *ip) {
     const U32 raw_bytes = U32FromVarInt128(data, ip);
     return (ProtobufTag){.field_number = raw_bytes >> 3,
                          .wire_type = raw_bytes & bitmask3};
 }
 
-static String8 String8FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static String8 String8FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     const U32 string_size = U32FromVarInt128(data, ip);
     const char *string_start = (const char *)data.v + *ip;
     *ip += string_size;
     return (String8){string_start, string_size};
 }
 
-static F64 F64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static F64 F64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     F64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(F64));
@@ -182,7 +183,7 @@ static F64 F64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     return val;
 }
 
-static F32 F32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static F32 F32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     F32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(F32));
@@ -190,7 +191,7 @@ static F32 F32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     return val;
 }
 
-static S64 S64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static S64 S64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     S64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(S64));
@@ -198,7 +199,7 @@ static S64 S64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     return val;
 }
 
-static S32 S32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static S32 S32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     S32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(S32));
@@ -206,7 +207,7 @@ static S32 S32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     return val;
 }
 
-static U32 U32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static U32 U32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     U32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(U32));
@@ -214,7 +215,7 @@ static U32 U32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     return val;
 }
 
-static U64 U64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static U64 U64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     U64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(U64));
@@ -245,7 +246,7 @@ static ProtobufValue ProtobufParseValue(MVT_ProtobufData data, U32 value_size, U
     return (ProtobufValue){0};
 }
 
-static S32 ParameterFromProtobufData(const MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE inline static S32 ParameterFromProtobufData(const MVT_ProtobufData data, U64 *ip) {
     return ParameterIntegerFromZigzagInteger(U32FromVarInt128(data, ip));
 }
 

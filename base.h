@@ -5,6 +5,12 @@
 #include <raylib.h>
 
 #include <stdint.h>
+
+// hashmap datastructure
+#define STB_DS_IMPLEMENTATION
+#include "vendor/stb_ds.h"
+
+// profiling
 #ifdef INTERNAL_ENABLE_PROFILE
 #define SPALL_AUTO_IMPLEMENTATION
 #include "vendor/spall_native_auto.h"
@@ -26,6 +32,14 @@
             exit(EXIT_FAILURE);                                                          \
         }                                                                                \
     } while (0);
+
+#if defined(_MSC_VER)
+#define INTERNAL_FORCEINLINE __forceinline
+#elif defined(__clang__) || defined(__GNUC__)
+#define INTERNAL_FORCEINLINE __attribute__((always_inline))
+#else
+#error need force inline for this compiler
+#endif
 
 #define CROSS(v0, v1, v2)                                                                \
     (((v1).x - (v0).x) * ((v2).y - (v0).y) - ((v1).y - (v0).y) * ((v2).x - (v0).x))
