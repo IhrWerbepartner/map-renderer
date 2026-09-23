@@ -4,6 +4,7 @@
 #include <float.h>
 #include <raylib.h>
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // hashmap datastructure
@@ -28,9 +29,9 @@
     } while (0);
 
 #if defined(_MSC_VER)
-#define INTERNAL_FORCEINLINE __forceinline
+#define INTERNAL_FORCEINLINE __forceinline inline
 #elif defined(__clang__) || defined(__GNUC__)
-#define INTERNAL_FORCEINLINE __attribute__((always_inline))
+#define INTERNAL_FORCEINLINE __attribute__((always_inline)) inline
 #else
 #error need force inline for this compiler
 #endif
@@ -54,6 +55,18 @@ typedef S32 B32;
 typedef S64 B64;
 typedef float F32;
 typedef double F64;
+typedef struct U128 U128;
+struct U128 {
+    U64 u64[2];
+};
+
+INTERNAL_FORCEINLINE U128 U128Zero(void) {
+    U128 v = {0};
+    return v;
+}
+INTERNAL_FORCEINLINE bool U128Match(U128 a, U128 b) {
+    return a.u64[0] == b.u64[0] && a.u64[1] == b.u64[1];
+}
 
 // global U64 max_U64 = 0xffffffffffffffffull;
 global const U32 max_U32 = 0xffffffff;

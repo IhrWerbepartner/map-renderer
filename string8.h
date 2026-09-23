@@ -80,4 +80,12 @@ static String8 String8Clone(Arena *arena, String8 to_clone) {
     return (String8){cloned_str, to_clone.len};
 }
 
+U64 HashFromString8(U64 seed, String8 string) {
+    U64 result = seed;
+    for (U64 i = 0; i < string.len; i += 1) {
+        result = ((result << 5) + result) + (U64)string.buf[i];
+    }
+    return result;
+}
+
 DeclFixedArray(String8Array, String8);

@@ -106,79 +106,40 @@ struct VtpkFileRootProperties {
 // Where Key/Value nodes can have siblings representing the multiple children of the node
 // in the hirachy above.
 
-typedef enum VT_SourceLayerType VT_SourceLayerType;
-enum VT_SourceLayerType { FILL, LINE, SYMBOL, CIRCLE };
-typedef struct VT_SourceLayer VT_SourceLayer;
-struct VT_SourceLayer {
-    VT_SourceLayerType type;
-    String8 source_layer;
-    S32 key_first;
-    S32 key_last;
+typedef struct VT_StyleMapKey VT_StyleMapKey;
+struct VT_StyleMapKey {
+    U64 layer_hash;
+    U64 filter_key_hash;
+    U64 filter_value;
+    U32 zoom;
 };
 
-typedef struct VT_SourceLayerMap VT_SourceLayerMap;
-struct VT_SourceLayerMap {
-    char *key;
-    VT_SourceLayer value;
-};
+typedef enum VT_StylePaintType VT_StylePaintType;
+enum VT_StylePaintType { FILL, LINE, SYMBOL, CIRCLE };
 
-typedef enum VT_LayerStyleNodeType VT_LayerStyleNodeType;
-enum VT_LayerStyleNodeType { FILTER_KEY = 1, FILTER_VALUE };
-
-typedef struct VT_LayerStyleNode VT_LayerStyleNode;
-struct VT_LayerStyleNode {
-    VT_LayerStyleNodeType type;
+typedef struct VT_StyleMapValue VT_StyleMapValue;
+struct VT_StyleMapValue {
+    VT_StylePaintType type;
     union {
-        struct FilterKeyNode {
-            String8 key;
-            S32 next;
-            S32 value_first;
-            S32 value_last;
-        } filter_key;
-        struct FilterValueNode {
-            S64 value;
-            union {
-                Color fill_color;
-                Color line_color;
-                Color circle_color;
-                String8 icon_image; // referes to the sprite name
-            } paint;
-            S32 next;
-        } filter_val;
-    };
+        Color fill_color;
+        Color line_color;
+        Color circle_color;
+        String8 icon_image; // referes to the sprite name
+    } paint;
 };
-DeclFixedArray(VT_LayerStyleNodeArray, VT_LayerStyleNode);
+
+typedef struct VT_StyleMap VT_StyleMap;
+struct VT_StyleMap {
+    VT_StyleMapKey key;
+    VT_StyleMapValue value;
+};
 
 typedef struct VtpkFile VtpkFile;
 struct VtpkFile {
     mz_zip_archive *archive;
     VtpkFileRootProperties root_propreties;
-    VT_SourceLayerMap *layer_styles;
-    VT_LayerStyleNodeArray layer_filters;
+    VT_StyleMap *layer_styles;
     AABB bounding_box;
     QuadTreeNodeArray quad_tree;
     S32 root_node;
 };
-
-// TODO: switch the map to be. this is way better
-// store a map<keys, values> this stores as many layers as in the styles file, not too
-// bad(!).
-// if a filter is not present hash("") is computed as the key hash. and 0 is written into
-// the value.
-//
-// keys:
-// struct {
-//     string_hash_128_bits layer;
-//     string_hash_128_bits key;
-//     U64 value;
-// };
-// values:
-// struct {
-//     union {
-//         struct fill_info;
-//         struct line_info;
-//         struct symbol_info;
-//         struct circle_info;
-//     };
-// };
-//

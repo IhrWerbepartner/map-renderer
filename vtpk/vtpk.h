@@ -8,7 +8,9 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include <stdbool.h>
+#ifdef DEBUG
 #include <stdio.h>
+#endif
 
 // TODO: fine tune
 #define DRAW_CACHE_SIZE (1024)
@@ -289,6 +291,8 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
     Material material = LoadMaterialDefault();
     material.maps[MATERIAL_MAP_DIFFUSE].color = BLUE;
 
+    Shader shader_blur = LoadShader(0, "shaders/blur.fs");
+
     SetTargetFPS(30); // NOTE: for now
     Color colors[13] = {RED,  GOLD,   LIME,  BLUE,    VIOLET, BROWN, LIGHTGRAY,
                         PINK, YELLOW, GREEN, SKYBLUE, PURPLE, BEIGE};
@@ -377,6 +381,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     rlPushMatrix();
                     rlLoadIdentity();
                     rlMultMatrixf(MatrixToFloat(texture_transform));
+                    // BeginShaderMode(shader_blur);
                     for (S32 j = 0; j < tiles.v[i].gpu_data.textures.count; j += 1) {
                         // OpenGL uses a y-inverted coordinate system. Flip the texture
                         // here.
@@ -385,8 +390,9 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                                                    .y = 0,
                                                    .width = MVT_TEXTURE_SIZE,
                                                    .height = -MVT_TEXTURE_SIZE},
-                                       (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE}, ORANGE);
+                                       (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE}, WHITE);
                     }
+                    // EndShaderMode();
                     rlPopMatrix();
                 }
             }

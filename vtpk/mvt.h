@@ -9,15 +9,14 @@
 #include <raylib.h>
 #include <stdbool.h>
 
-#define MVT_TEXTURE_SIZE 2048
-#define MVT_MESH_SIZE 4096
+#define MVT_TEXTURE_SIZE (512 * 4)
+#define MVT_MESH_SIZE (512 * 8)
 
 typedef struct MVT_ProtobufData MVT_ProtobufData;
 struct MVT_ProtobufData {
     U8 *v;
     U64 size;
 };
-
 
 // implements the spec found here:
 // https://github.com/mapbox/vector-tile-spec/tree/master/2.1
@@ -37,6 +36,14 @@ enum MVT_ProtobufLayerField {
     LAYER_FIELD_KEYS = 3,
     LAYER_FIELD_VALUES = 4,
     LAYER_FIELD_EXTENT = 5,
+};
+
+typedef enum MVT_ProtobufFeatureField MVT_ProtobufFeatureField;
+enum MVT_ProtobufFeatureField {
+    FEATURE_FIELD_ID = 1,
+    FEATURE_FIELD_TAGS = 2,
+    FEATURE_FIELD_TYPE = 3,
+    FEATURE_FIELD_GEOMETRY = 4,
 };
 
 typedef enum WindingOrder WindingOrder;
@@ -88,7 +95,6 @@ struct LayerCoords {
     RangeArray multi_points;       // an index into coord for every (multi)-point.
 };
 
-
 typedef enum MVT_PlotterCommand MVT_PlotterCommand;
 enum MVT_PlotterCommand {
     MOVE_TO = 1,    // 2 parameters (dX, dY)
@@ -107,13 +113,13 @@ struct MVT_Plotter {
     S32 pos_x, pos_y;
 };
 
-INTERNAL_FORCEINLINE inline static MVT_PlotterInstruction
+INTERNAL_FORCEINLINE static MVT_PlotterInstruction
 InstructionFromCommandInteger(U32 command_integer) {
     return (MVT_PlotterInstruction){.command = command_integer & bitmask3,
                                     .count = command_integer >> 3};
 }
 
-INTERNAL_FORCEINLINE inline static S32 ParameterIntegerFromZigzagInteger(U32 zigzag_value) {
+INTERNAL_FORCEINLINE static S32 ParameterIntegerFromZigzagInteger(U32 zigzag_value) {
     return (S32)((zigzag_value >> 1) ^ (-(zigzag_value & 1)));
 }
 
@@ -130,16 +136,16 @@ static U64 DecodeVarInt128(const MVT_ProtobufData data, U32 allowed_bytes_read, 
     ERROR_MSG("invalid VarInt128 detected");
 }
 
-INTERNAL_FORCEINLINE inline static U64 U64FromVarInt128(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static U64 U64FromVarInt128(MVT_ProtobufData data, U64 *ip) {
     return DecodeVarInt128(data, 10, ip);
 }
 
-INTERNAL_FORCEINLINE inline static U32 U32FromVarInt128(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static U32 U32FromVarInt128(MVT_ProtobufData data, U64 *ip) {
     return safe_cast_u32(DecodeVarInt128(data, 5, ip));
 }
 
-INTERNAL_FORCEINLINE inline static MVT_PlotterInstruction PlotterInstructionFromProtobufData(MVT_ProtobufData data,
-                                                                 U64 *ip) {
+INTERNAL_FORCEINLINE static MVT_PlotterInstruction
+PlotterInstructionFromProtobufData(MVT_ProtobufData data, U64 *ip) {
     const U32 command_integer = U32FromVarInt128(data, ip);
     return InstructionFromCommandInteger(command_integer);
 }
@@ -150,20 +156,22 @@ struct ProtobufTag {
     enum { VARINT = 0, I64 = 1, LEN = 2, SGROUP = 3, EGROUP = 4, I32 = 5 } wire_type;
 };
 
-INTERNAL_FORCEINLINE inline static ProtobufTag TagFromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static ProtobufTag TagFromProtobufData(MVT_ProtobufData data,
+                                                            U64 *ip) {
     const U32 raw_bytes = U32FromVarInt128(data, ip);
     return (ProtobufTag){.field_number = raw_bytes >> 3,
                          .wire_type = raw_bytes & bitmask3};
 }
 
-INTERNAL_FORCEINLINE inline static String8 String8FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static String8 String8FromProtobufData(MVT_ProtobufData data,
+                                                            U64 *ip) {
     const U32 string_size = U32FromVarInt128(data, ip);
     const char *string_start = (const char *)data.v + *ip;
     *ip += string_size;
     return (String8){string_start, string_size};
 }
 
-INTERNAL_FORCEINLINE inline static F64 F64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static F64 F64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     F64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(F64));
@@ -171,7 +179,7 @@ INTERNAL_FORCEINLINE inline static F64 F64FromProtobufData(MVT_ProtobufData data
     return val;
 }
 
-INTERNAL_FORCEINLINE inline static F32 F32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static F32 F32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     F32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(F32));
@@ -179,7 +187,7 @@ INTERNAL_FORCEINLINE inline static F32 F32FromProtobufData(MVT_ProtobufData data
     return val;
 }
 
-INTERNAL_FORCEINLINE inline static S64 S64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static S64 S64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     S64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(S64));
@@ -187,7 +195,7 @@ INTERNAL_FORCEINLINE inline static S64 S64FromProtobufData(MVT_ProtobufData data
     return val;
 }
 
-INTERNAL_FORCEINLINE inline static S32 S32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static S32 S32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     S32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(S32));
@@ -195,7 +203,7 @@ INTERNAL_FORCEINLINE inline static S32 S32FromProtobufData(MVT_ProtobufData data
     return val;
 }
 
-INTERNAL_FORCEINLINE inline static U32 U32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static U32 U32FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     U32 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(U32));
@@ -203,7 +211,7 @@ INTERNAL_FORCEINLINE inline static U32 U32FromProtobufData(MVT_ProtobufData data
     return val;
 }
 
-INTERNAL_FORCEINLINE inline static U64 U64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static U64 U64FromProtobufData(MVT_ProtobufData data, U64 *ip) {
     U64 val;
     const U8 *src = data.v + *ip;
     memcpy(&val, src, sizeof(U64));
@@ -234,7 +242,8 @@ static ProtobufValue ProtobufParseValue(MVT_ProtobufData data, U32 value_size, U
     return (ProtobufValue){0};
 }
 
-INTERNAL_FORCEINLINE inline static S32 ParameterFromProtobufData(const MVT_ProtobufData data, U64 *ip) {
+INTERNAL_FORCEINLINE static S32 ParameterFromProtobufData(const MVT_ProtobufData data,
+                                                          U64 *ip) {
     return ParameterIntegerFromZigzagInteger(U32FromVarInt128(data, ip));
 }
 
@@ -394,6 +403,7 @@ static void PointFromProtobufData(const MVT_ProtobufData data, LayerCoords *coor
     RangeArrayPush(&coords->multi_points,
                    (Range){point_start, coords->texture_coords.count - point_start});
 }
+
 // parses a Feature and writes the coords into the provided layercoords for
 // triangulation -> mesh/texture generation
 static void ProtobufParseFeature(MVT_ProtobufData data, LayerCoords *coords,
@@ -405,23 +415,30 @@ static void ProtobufParseFeature(MVT_ProtobufData data, LayerCoords *coords,
         const U64 saved_ip = *ip;
         const ProtobufTag feature_field = TagFromProtobufData(data, ip);
         switch (feature_field.field_number) {
-        case 1: {
-            // ID: skip for now (is optional anyway)
+        case FEATURE_FIELD_ID: {
+            // ID: skip (is optional anyway)
             assert(feature_field.wire_type == VARINT);
             const U64 id = U64FromVarInt128(data, ip);
             (void)id;
         } break;
-        case 2: {
-            // TAGS: TODO skip for now
+        case FEATURE_FIELD_TAGS: {
+            // TAGS:
+            // TODO: Parse the indices in the per layer key-value store.
+            // The tags are layed out as (key: VarInt128, val: VarInt128)*
+            //
+            // TODO: Look up the style for this feature by iterating over the key-value
+            // pairs for this feature and take the first one that fits.
+            // This requires writing to the Texture/Mesh here as we have the correct style
+            // info for this feature.
             assert(feature_field.wire_type == LEN);
             const U32 tags_size = U32FromVarInt128(data, ip);
             *ip += tags_size;
         } break;
-        case 3: {
+        case FEATURE_FIELD_TYPE: {
             assert(feature_field.wire_type == VARINT);
             geometry_type = U32FromVarInt128(data, ip);
         } break;
-        case 4: {
+        case FEATURE_FIELD_GEOMETRY: {
             assert(feature_field.wire_type == LEN);
             const U32 geometry_size = U32FromVarInt128(data, ip);
             geometry_range = (Range){.min = safe_cast_s32_from_u64(*ip),
@@ -618,6 +635,13 @@ static VectorTileGPU_Data ParseMapboxVectorTile(Arena *arena, MVT_ProtobufData d
             } break;
             case LAYER_FIELD_KEYS: {
                 assert(layer_field.wire_type == LEN);
+                // TODO: store the keys in a []String8 and the values in a
+                // []discriminated union. Although splitting the values depending on type
+                // would be easier for the CPU indexing becomes really cumbersome.
+                //
+                // TODO: These arrays are stored once per layer and passed to the feature
+                // parser to use. This also means parsing features has to be deferred
+                // after all key-values are decoded. (E.g. not in this loop).
                 const String8 key_name = String8FromProtobufData(data, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
