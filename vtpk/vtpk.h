@@ -13,7 +13,7 @@
 #endif
 
 // TODO: fine tune
-#define DRAW_CACHE_SIZE (1024)
+#define DRAW_CACHE_SIZE (64)
 #define DRAW_TILE_PIXEL_COUNT 512
 
 typedef struct DrawCache DrawCache;
