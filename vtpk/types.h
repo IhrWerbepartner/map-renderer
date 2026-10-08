@@ -15,8 +15,8 @@ struct AABB {
     S32 min_x, min_y, max_x, max_y;
 };
 
-typedef struct VectorTileCoordinate VectorTileCoordinate;
-struct VectorTileCoordinate {
+typedef struct VT_Coordinate VT_Coordinate;
+struct VT_Coordinate {
     S32 row, col, level;
 };
 
@@ -28,21 +28,16 @@ enum VectorTileHandleStatus {
                       // and is now invalid
 };
 
-DeclFixedArray(MeshArray, Mesh);
-DeclFixedArray(RenderTexture2DArray, RenderTexture2D);
-// SOA layout for vector tile data.
-// Name can determine if this layer should be drawn and how
 typedef struct VectorTileGPU_Data VectorTileGPU_Data;
 struct VectorTileGPU_Data {
-    MeshSlice meshes;
-    RenderTexture2DSlice textures;
-    String8Slice layer_names;
+    Mesh mesh;
+    RenderTexture2D texture;
 };
 
 // handle into cache for triangualted tiles
 typedef struct VectorTileHandle VectorTileHandle;
 struct VectorTileHandle {
-    VectorTileCoordinate coordinate;
+    VT_Coordinate coordinate;
     VectorTileGPU_Data gpu_data;
     S32 quad_tree_node;
     VectorTileHandleStatus status;
@@ -101,16 +96,11 @@ struct VtpkFileRootProperties {
     U32 tile_info_cols, tile_info_rows;
 };
 
-// describes a lookup for a style held in FilterValueNode.paint
-// Nodes are ordered hirachically SourceLayerNode -> FilterKeyNode -> FilterValueNode.
-// Where Key/Value nodes can have siblings representing the multiple children of the node
-// in the hirachy above.
-
 typedef struct VT_StyleMapKey VT_StyleMapKey;
 struct VT_StyleMapKey {
     U64 layer_hash;
     U64 filter_key_hash;
-    U64 filter_value;
+    S64 filter_value;
     U32 zoom;
 };
 
@@ -128,6 +118,7 @@ struct VT_StyleMapValue {
     } paint;
 };
 
+// maps VT_StyleMapKeys -> VT_StyleMapValues. Stored once persistent (!) per VTPK Bundle.
 typedef struct VT_StyleMap VT_StyleMap;
 struct VT_StyleMap {
     VT_StyleMapKey key;
@@ -142,4 +133,22 @@ struct VtpkFile {
     AABB bounding_box;
     QuadTreeNodeArray quad_tree;
     S32 root_node;
+};
+
+typedef struct VT_VectorData VT_VectorData;
+struct VT_VectorData {
+    S32Array vertex_soup;
+    S32Array triangle_colors; // RGBA
+    S32 vertex_count;
+    S32 triangle_count;
+
+    Coord2Array texture_coords;    // holds the coordinates for every feature that
+                                   // gets transformed into a GPU texture.
+    RangeArray line_strings;       // a slice into coords for every line-string.
+    RangeArray multi_line_strings; // a slice into coords for every MULTI line-string. This is
+                                   // equivalent to the number of LINESTRINGs in the Protobuf Data.
+    S64Array multi_line_style_indices;
+
+    RangeArray multi_points; // an index into coord for every (multi)-point.
+    S64Array mutli_point_style_indices;
 };

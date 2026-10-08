@@ -12,7 +12,7 @@
 #include <stdio.h>
 #endif
 
-// TODO: fine tune
+// NOTE: fine tune
 #define DRAW_CACHE_SIZE (64)
 #define DRAW_TILE_PIXEL_COUNT 512
 
@@ -68,25 +68,25 @@ static S32Slice NonCachedTileIndices(Arena *arena, const S32Slice visible_tiles,
 
 // copy tiles within AABB to back buffer and request missing ones fromt the
 // tilecache. finally swap back and front buffer.
-static VectorTileHandleSlice
-MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache, S32 zoom_level) {
+static VectorTileHandleSlice MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache,
+                                                   S32 zoom_level) {
     // clear back buffer (becomes new front)
     VectorTileHandleArrayReset(&draw_cache->back_buffer);
     const AABB bbox = vtpk_file->bounding_box;
     for (S32 i = 0; i < draw_cache->front_buffer.count; i += 1) {
         const VectorTileHandle handle = draw_cache->front_buffer.d[i];
         if (handle.coordinate.level == zoom_level &&
-            AABBContains(bbox,
-                         vtpk_file->quad_tree.d[handle.quad_tree_node].tile.coordinate)) {
+            AABBContains(bbox, vtpk_file->quad_tree.d[handle.quad_tree_node].tile.coordinate)) {
             VectorTileHandleArrayPush(&draw_cache->back_buffer, handle);
+        } else {
+            UnloadRenderTexture(handle.gpu_data.texture);
         }
     }
 
     ScratchArena() {
-        S32Array visible_tiles =
-            S32ArrayNew(arena_auto_close_latch.scratch.arena, DRAW_CACHE_SIZE);
-        QuadTreeFind(QuadTreeNodeSliceFromArray(&vtpk_file->quad_tree),
-                     vtpk_file->root_node, bbox, zoom_level, &visible_tiles);
+        S32Array visible_tiles = S32ArrayNew(arena_auto_close_latch.scratch.arena, DRAW_CACHE_SIZE);
+        QuadTreeFind(QuadTreeNodeSliceFromArray(&vtpk_file->quad_tree), vtpk_file->root_node, bbox,
+                     zoom_level, &visible_tiles);
 #ifdef DEBUG
         // fprintf(stderr, "visible_tiles: ");
         // PrintMissingTiles(S32SliceFromArray(&visible_tiles), vtpk_file->quad_tree);
@@ -103,8 +103,7 @@ MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache, S32 zoom_level
 #endif
         VectorTileHandlesFromFile(vtpk_file, missing_tile_indices);
         for (S32 i = 0; i < missing_tile_indices.count; i += 1) {
-            const VectorTileHandle handle =
-                vtpk_file->quad_tree.d[missing_tile_indices.v[i]].tile;
+            const VectorTileHandle handle = vtpk_file->quad_tree.d[missing_tile_indices.v[i]].tile;
             assert(handle.status == DATA_PRESENT);
             VectorTileHandleArrayPush(&draw_cache->back_buffer, handle);
         }
@@ -122,12 +121,11 @@ struct TileCamera {
     Vector2 target; // Camera target (world space target point that is mapped to screen
                     // space offset)
     float rotation; // Camera rotation in degrees (pivots around target)
-    float zoom; // Camera zoom (scaling around target), must not be set to 0, set to 1.0f
-                // for no scale
+    float zoom;     // Camera zoom (scaling around target), must not be set to 0, set to 1.0f
+                    // for no scale
 };
 static Camera2D Camera2DFromTileCamera(TileCamera camera) {
-    return (Camera2D){camera.offset, camera.target, camera.rotation,
-                      1.f + fmodf(camera.zoom, 1.f)};
+    return (Camera2D){camera.offset, camera.target, camera.rotation, 1.f + fmodf(camera.zoom, 1.f)};
 }
 
 // Initialize 2D mode with custom camera (2D)
@@ -148,10 +146,9 @@ static void EndModeTile(void) { EndMode2D(); }
 
 static TileCamera ResetTileCamera(Screen screen) {
     return (TileCamera){
-        .zoom =
-            1.0f, // speicfies the zoom level. Is in the range (0; +infinity).
-                  // the non integer part is used to interpolate between the tile sizes
-                  // meaning it zooms the camera until the next tile size is hit.
+        .zoom = 1.0f, // speicfies the zoom level. Is in the range (0; +infinity).
+                      // the non integer part is used to interpolate between the tile sizes
+                      // meaning it zooms the camera until the next tile size is hit.
         .rotation = 0.0f,
         .offset = (Vector2){(float)screen.width / 2.0f, (float)screen.height / 2.0f},
         .target.x = (F32)DRAW_TILE_PIXEL_COUNT / 2.f,
@@ -181,12 +178,12 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
         const S32 zoom_level_new = (S32)(wheel_scaled + tile_camera->zoom);
         if (zoom_level_old < zoom_level_new) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 2.f);
-            tile_camera->target = Vector2Subtract(
-                tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT});
+            tile_camera->target =
+                Vector2Subtract(tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT});
         } else if (zoom_level_old > zoom_level_new) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 0.5f);
-            tile_camera->target = Vector2Add(
-                tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT / 2.f});
+            tile_camera->target =
+                Vector2Add(tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT / 2.f});
         } else {
             tile_camera->target = mouseWorldPos;
         }
@@ -206,15 +203,14 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
     }
 }
 
-static Matrix ModelTransformFromCoords(VectorTileCoordinate coords,
-                                       U32 units_per_tile_current,
+static Matrix ModelTransformFromCoords(VT_Coordinate coords, U32 units_per_tile_current,
                                        U32 units_per_tile_max) {
     const F32 scaling = (F32)units_per_tile_max / (F32)units_per_tile_current;
     const F32 world_pixel_size = (F32)units_per_tile_max * exp2f((F32)coords.level);
     const F32 tile_world_size = world_pixel_size / exp2f((F32)coords.level);
-    return MatrixCompose((Vector3){(F32)coords.col * tile_world_size,
-                                   (F32)coords.row * tile_world_size, 0.0f},
-                         QuaternionIdentity(), (Vector3){scaling, scaling, 1.f});
+    return MatrixCompose(
+        (Vector3){(F32)coords.col * tile_world_size, (F32)coords.row * tile_world_size, 0.0f},
+        QuaternionIdentity(), (Vector3){scaling, scaling, 1.f});
 }
 
 static void DrawWorldGrid(Camera2D camera, Screen screen, F32 gridSize, Color gridColor,
@@ -251,23 +247,20 @@ static void DrawWorldGrid(Camera2D camera, Screen screen, F32 gridSize, Color gr
     }
 }
 
-static void UpdateVisibleBoundingBox(VtpkFile *vtpk_file, TileCamera camera_tile,
-                                     Screen screen) {
+static void UpdateVisibleBoundingBox(VtpkFile *vtpk_file, TileCamera camera_tile, Screen screen) {
     const Camera2D camera_2d = Camera2DFromTileCamera(camera_tile);
     {
         const Vector2 world_top_left = GetScreenToWorld2D(Vector2Zero(), camera_2d);
-        const Vector2 tile_top_left =
-            Vector2Scale(world_top_left, 1.f / DRAW_TILE_PIXEL_COUNT);
+        const Vector2 tile_top_left = Vector2Scale(world_top_left, 1.f / DRAW_TILE_PIXEL_COUNT);
         // TraceLog(LOG_INFO, "top_left tile: (col: %.1f, row: %.1f)", tile_top_left.x,
         // tile_top_left.y);
         vtpk_file->bounding_box.min_x = (S32)floorf(tile_top_left.x);
         vtpk_file->bounding_box.min_y = (S32)floorf(tile_top_left.y) - 1;
     }
     {
-        const Vector2 world_bot_right = GetScreenToWorld2D(
-            (Vector2){(F32)screen.width, (F32)screen.height}, camera_2d);
-        const Vector2 tile_bot_right =
-            Vector2Scale(world_bot_right, 1.f / DRAW_TILE_PIXEL_COUNT);
+        const Vector2 world_bot_right =
+            GetScreenToWorld2D((Vector2){(F32)screen.width, (F32)screen.height}, camera_2d);
+        const Vector2 tile_bot_right = Vector2Scale(world_bot_right, 1.f / DRAW_TILE_PIXEL_COUNT);
         // TraceLog(LOG_INFO, "bot_right tile: (col: %.0f, row: %.0f)",
         // ceilf(tile_bot_right.x), ceilf(tile_bot_right.y));
         vtpk_file->bounding_box.max_x = (S32)floorf(tile_bot_right.x);
@@ -285,13 +278,12 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
     TileCamera camera = ResetTileCamera(screen);
 
     const S32 draw_cache_size = DRAW_CACHE_SIZE;
-    DrawCache draw_cache =
-        (DrawCache){VectorTileHandleArrayNew(scratch.arena, draw_cache_size),
-                    VectorTileHandleArrayNew(scratch.arena, draw_cache_size)};
+    DrawCache draw_cache = (DrawCache){VectorTileHandleArrayNew(scratch.arena, draw_cache_size),
+                                       VectorTileHandleArrayNew(scratch.arena, draw_cache_size)};
     Material material = LoadMaterialDefault();
     material.maps[MATERIAL_MAP_DIFFUSE].color = BLUE;
 
-    Shader shader_blur = LoadShader(0, "shaders/blur.fs");
+    //Shader shader_blur = LoadShader(0, "shaders/blur.fs");
 
     SetTargetFPS(30); // NOTE: for now
     Color colors[13] = {RED,  GOLD,   LIME,  BLUE,    VIOLET, BROWN, LIGHTGRAY,
@@ -323,13 +315,13 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
         ClearBackground(RAYWHITE);
         BeginModeTile(camera);
         if (render_options.show_grid) {
-            DrawWorldGrid(Camera2DFromTileCamera(camera), screen,
-                          (F32)DRAW_TILE_PIXEL_COUNT, LIGHTGRAY, RED);
+            DrawWorldGrid(Camera2DFromTileCamera(camera), screen, (F32)DRAW_TILE_PIXEL_COUNT,
+                          LIGHTGRAY, RED);
         }
         {
             // DrawRectangle(0, 512, tile_size, tile_size, RED);
-            VectorTileHandleSlice tiles = MeshesFromBoundingBox(
-                vtpk_file, &draw_cache, ClampBot((S32)camera.zoom, 0));
+            VectorTileHandleSlice tiles =
+                MeshesFromBoundingBox(vtpk_file, &draw_cache, ClampBot((S32)camera.zoom, 0));
             current_color = 0;
             for (S32 i = 0; i < tiles.count; i += 1) {
                 VectorTileHandle tile = tiles.v[i];
@@ -346,31 +338,25 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                         mesh_pos.x = mesh_transform.m12;
                         mesh_pos.y = mesh_transform.m13;
                         mesh_pos.z = mesh_transform.m14;
-                        DrawMesh(
-                            tile.gpu_data.meshes.v[j], material,
-                            MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
+                        DrawMesh(tile.gpu_data.meshes.v[j], material,
+                                 MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
                         if (render_options.show_bounding_box) {
-                            BoundingBox bbox =
-                                GetMeshBoundingBox(tile.gpu_data.meshes.v[j]);
+                            BoundingBox bbox = GetMeshBoundingBox(tile.gpu_data.meshes.v[j]);
                             DrawRectangleLines((S32)bbox.min.x, (S32)bbox.min.y,
                                                (S32)(bbox.max.x - bbox.min.x),
                                                (S32)(bbox.max.y - bbox.min.y), GREEN);
-                            DrawTextEx(
-                                GetFontDefault(),
-                                TextFormat("[ROW: %d COL: %d LVL: %d]",
-                                           tile.coordinate.row, tile.coordinate.col,
-                                           tile.coordinate.level),
-                                (Vector2){bbox.min.x + 10, bbox.min.y + 10}, 10, 1, RED);
-                            Vector2 screen_pos_min =
-                                GetWorldToScreen2D((Vector2){bbox.min.x, bbox.min.y},
-                                                   Camera2DFromTileCamera(camera));
-                            TraceLog(LOG_INFO, "bbox min screen coords: [%f, %f]",
-                                     screen_pos_min.x, screen_pos_min.y);
-                            Vector2 screen_pos_max =
-                                GetWorldToScreen2D((Vector2){bbox.max.x, bbox.max.y},
-                                                   Camera2DFromTileCamera(camera));
-                            TraceLog(LOG_INFO, "bbox max screen coords: [%f, %f]",
-                                     screen_pos_max.x, screen_pos_max.y);
+                            DrawTextEx(GetFontDefault(),
+                                       TextFormat("[ROW: %d COL: %d LVL: %d]", tile.coordinate.row,
+                                                  tile.coordinate.col, tile.coordinate.level),
+                                       (Vector2){bbox.min.x + 10, bbox.min.y + 10}, 10, 1, RED);
+                            Vector2 screen_pos_min = GetWorldToScreen2D(
+                                (Vector2){bbox.min.x, bbox.min.y}, Camera2DFromTileCamera(camera));
+                            TraceLog(LOG_INFO, "bbox min screen coords: [%f, %f]", screen_pos_min.x,
+                                     screen_pos_min.y);
+                            Vector2 screen_pos_max = GetWorldToScreen2D(
+                                (Vector2){bbox.max.x, bbox.max.y}, Camera2DFromTileCamera(camera));
+                            TraceLog(LOG_INFO, "bbox max screen coords: [%f, %f]", screen_pos_max.x,
+                                     screen_pos_max.y);
                         }
                     }
                     rlPopMatrix();
@@ -382,16 +368,11 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     rlLoadIdentity();
                     rlMultMatrixf(MatrixToFloat(texture_transform));
                     // BeginShaderMode(shader_blur);
-                    for (S32 j = 0; j < tiles.v[i].gpu_data.textures.count; j += 1) {
-                        // OpenGL uses a y-inverted coordinate system. Flip the texture
-                        // here.
-                        DrawTextureRec(tiles.v[i].gpu_data.textures.v[j].texture,
-                                       (Rectangle){.x = 0,
-                                                   .y = 0,
-                                                   .width = MVT_TEXTURE_SIZE,
-                                                   .height = -MVT_TEXTURE_SIZE},
-                                       (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE}, WHITE);
-                    }
+                    DrawTextureRec(
+                        tiles.v[i].gpu_data.texture.texture,
+                        (Rectangle){
+                            .x = 0, .y = 0, .width = MVT_TEXTURE_SIZE, .height = -MVT_TEXTURE_SIZE},
+                        (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE}, WHITE);
                     // EndShaderMode();
                     rlPopMatrix();
                 }
@@ -400,17 +381,14 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
         EndModeTile();
         //  --------------------- HUD -------------------------
         DrawText(TextFormat("CURRENT ZOOM: %03.04f", camera.zoom), 640, 10, 20, BLACK);
-        DrawText(TextFormat("CAMERA TARGET: [%03.04f, %03.04f]", camera.target.x,
-                            camera.target.y),
+        DrawText(TextFormat("CAMERA TARGET: [%03.04f, %03.04f]", camera.target.x, camera.target.y),
                  640, 40, 20, BLACK);
         DrawFPS(640, 70);
         Vector2 mouseWorldPos =
             GetScreenToWorld2D(GetMousePosition(), Camera2DFromTileCamera(camera));
-        DrawText(TextFormat("MOUSE POS : [%03.04f, %03.04f]", mouseWorldPos.x,
-                            mouseWorldPos.y),
+        DrawText(TextFormat("MOUSE POS : [%03.04f, %03.04f]", mouseWorldPos.x, mouseWorldPos.y),
                  100, 10, 20, BLACK);
-        DrawText(TextFormat("FRAME TIME: %f MS", Thousand(GetFrameTime())), 640, 100, 20,
-                 BLACK);
+        DrawText(TextFormat("FRAME TIME: %f MS", Thousand(GetFrameTime())), 640, 100, 20, BLACK);
         EndDrawing();
         //----------------------------------------------------------------------------------
     }

@@ -15,4 +15,5 @@ map-renderer-release-stripped
 unoptimized-map-renderer
 stripped_map-renderer
 ressources/
+raylib_test/
 .idea/

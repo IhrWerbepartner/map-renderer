@@ -2,7 +2,6 @@
 
 #include "../arena.c"
 #include "../base.h"
-#include "../fixed-array.c"
 #include "../json_parser.h"
 #include "../string8.h"
 #include "mvt.h"
@@ -13,20 +12,6 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
-
-static unsigned char gpu_data_arena_level0to7_buf[MB(100)] = {0};
-static unsigned char gpu_data_arena_level8to12_buf[MB(300)] = {0};
-static unsigned char gpu_data_arena_level13to15_buf[MB(300)] = {0};
-static unsigned char gpu_data_arena_level16_buf[MB(300)] = {0};
-
-static Arena gpu_data_arena_level0to7 =
-    (Arena){gpu_data_arena_level0to7_buf, sizeof(gpu_data_arena_level0to7_buf), 0, 0};
-static Arena gpu_data_arena_level8to12 =
-    (Arena){gpu_data_arena_level8to12_buf, sizeof(gpu_data_arena_level8to12_buf), 0, 0};
-static Arena gpu_data_arena_level13to15 =
-    (Arena){gpu_data_arena_level13to15_buf, sizeof(gpu_data_arena_level13to15_buf), 0, 0};
-static Arena gpu_data_arena_level16 =
-    (Arena){gpu_data_arena_level16_buf, sizeof(gpu_data_arena_level16_buf), 0, 0};
 
 static void OpenZipArchive(mz_zip_archive *archive, const char *filepath) {
     assert(archive->m_last_error == MZ_ZIP_NO_ERROR);
@@ -46,29 +31,28 @@ static U64 UncompressedFileSize(mz_zip_archive *archive, U32 file_index) {
     return stat.m_uncomp_size;
 }
 
-static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, const JsonNode *node, S32 x,
-                                S32 y, S32 level) {
+static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, const JsonNode *node, S32 x, S32 y,
+                                S32 level) {
     assert(node != &json_node_null);
     switch (node->type) {
     case JSON_ARRAY: {
         ASSERT(node->children.count == 4, "invalid list of children");
-        const S32 child_nw = QuadTreeNodeFromJson(quad_tree, node->children.first, x * 2,
+        const S32 child_nw =
+            QuadTreeNodeFromJson(quad_tree, node->children.first, x * 2, y * 2, level + 1);
+        const S32 child_ne = QuadTreeNodeFromJson(quad_tree, node->children.first->next, x * 2,
+                                                  (y * 2) + 1, level + 1);
+        const S32 child_sw = QuadTreeNodeFromJson(quad_tree, node->children.last->prev, (x * 2) + 1,
                                                   y * 2, level + 1);
-        const S32 child_ne = QuadTreeNodeFromJson(quad_tree, node->children.first->next,
-                                                  x * 2, (y * 2) + 1, level + 1);
-        const S32 child_sw = QuadTreeNodeFromJson(quad_tree, node->children.last->prev,
-                                                  (x * 2) + 1, y * 2, level + 1);
-        const S32 child_se = QuadTreeNodeFromJson(quad_tree, node->children.last,
-                                                  (x * 2) + 1, (y * 2) + 1, level + 1);
+        const S32 child_se = QuadTreeNodeFromJson(quad_tree, node->children.last, (x * 2) + 1,
+                                                  (y * 2) + 1, level + 1);
         const S32 node_index =
             QuadTreeNodeArrayPush(quad_tree, (QuadTreeNode){.type = INNER,
                                                             .child_nw = child_nw,
                                                             .child_ne = child_ne,
                                                             .child_sw = child_sw,
                                                             .child_se = child_se});
-        quad_tree->d[node_index].tile =
-            (VectorTileHandle){.quad_tree_node = node_index,
-                               .coordinate = (VectorTileCoordinate){x, y, level}};
+        quad_tree->d[node_index].tile = (VectorTileHandle){
+            .quad_tree_node = node_index, .coordinate = (VT_Coordinate){x, y, level}};
         return node_index;
     }
     case JSON_INTEGER: {
@@ -77,11 +61,9 @@ static S32 QuadTreeNodeFromJson(QuadTreeNodeArray *quad_tree, const JsonNode *no
         if (val == 0) {
             return 0;
         }
-        const S32 node_index =
-            QuadTreeNodeArrayPush(quad_tree, (QuadTreeNode){.type = LEAF});
-        quad_tree->d[node_index].tile =
-            (VectorTileHandle){.quad_tree_node = node_index,
-                               .coordinate = (VectorTileCoordinate){x, y, level}};
+        const S32 node_index = QuadTreeNodeArrayPush(quad_tree, (QuadTreeNode){.type = LEAF});
+        quad_tree->d[node_index].tile = (VectorTileHandle){
+            .quad_tree_node = node_index, .coordinate = (VT_Coordinate){x, y, level}};
         return node_index;
     }
     case JSON_INVALID:
@@ -114,21 +96,18 @@ static void QuadTreeFromJson(Arena *arena, VtpkFile *vtpk_file) {
     const U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
 
     // zero (sentinel value) first index
-    vtpk_file->quad_tree =
-        QuadTreeNodeArrayNew(arena, safe_cast_s32_from_u64(file_size) / 2);
+    vtpk_file->quad_tree = QuadTreeNodeArrayNew(arena, safe_cast_s32_from_u64(file_size) / 2);
     QuadTreeNodeArrayPush(&vtpk_file->quad_tree, (QuadTreeNode){0});
 
     Temp_Arena_Memory json_scratch = temp_arena_memory_begin(arena);
     char *file_content = arena_alloc(json_scratch.arena, file_size + 1);
-    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
-                                 file_size + 1, 0);
+    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content, file_size + 1, 0);
     assert(vtpk_file->archive->m_last_error == MZ_ZIP_NO_ERROR);
 
     JsonNode *root = JsonNodeFromString(arena, file_content);
     assert(root->type == JSON_OBJECT);
     const JsonNode *tree_root = JsonFindKey(root, String8FromCString("index"));
-    vtpk_file->root_node =
-        QuadTreeNodeFromJson(&vtpk_file->quad_tree, tree_root, 0, 0, 0);
+    vtpk_file->root_node = QuadTreeNodeFromJson(&vtpk_file->quad_tree, tree_root, 0, 0, 0);
 
     temp_arena_memory_end(json_scratch);
 }
@@ -142,23 +121,18 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     U32 file_index = FileIndexFromFileName(vtpk_file->archive, root_properties);
     U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
     char *file_content = arena_alloc(json_scratch.arena, file_size + 1);
-    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
-                                 file_size + 1, 0);
+    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content, file_size + 1, 0);
 
     JsonNode *root = JsonNodeFromString(arena, file_content);
     assert(root->type == JSON_OBJECT);
     const JsonNode *tile_info = JsonFindKey(root, String8FromCString("tileInfo"));
     {
-        const JsonNode *tile_info_rows =
-            JsonFindKey(tile_info, String8FromCString("rows"));
-        const JsonNode *tile_info_cols =
-            JsonFindKey(tile_info, String8FromCString("cols"));
+        const JsonNode *tile_info_rows = JsonFindKey(tile_info, String8FromCString("rows"));
+        const JsonNode *tile_info_cols = JsonFindKey(tile_info, String8FromCString("cols"));
         assert(tile_info_rows->type == JSON_INTEGER);
         assert(tile_info_cols->type == JSON_INTEGER);
-        vtpk_file->root_propreties.tile_info_rows =
-            safe_cast_u32(tile_info_rows->num.u_value);
-        vtpk_file->root_propreties.tile_info_cols =
-            safe_cast_u32(tile_info_cols->num.u_value);
+        vtpk_file->root_propreties.tile_info_rows = safe_cast_u32(tile_info_rows->num.u_value);
+        vtpk_file->root_propreties.tile_info_cols = safe_cast_u32(tile_info_cols->num.u_value);
     }
     {
         const JsonNode *origin = JsonFindKey(tile_info, String8FromCString("origin"));
@@ -172,16 +146,13 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     }
     {
         const JsonNode *lods = JsonFindKey(tile_info, String8FromCString("lods"));
-        vtpk_file->root_propreties.lod_resolutions =
-            F64ArrayNew(arena, lods->children.count);
+        vtpk_file->root_propreties.lod_resolutions = F64ArrayNew(arena, lods->children.count);
         for (JsonNode *child = lods->children.first; child != lods->children.last;
              child = child->next) {
             assert(child->type == JSON_OBJECT);
-            const JsonNode *resolution =
-                JsonFindKey(child, String8FromCString("resolution"));
+            const JsonNode *resolution = JsonFindKey(child, String8FromCString("resolution"));
             assert(resolution->type == JSON_DOUBLE);
-            F64ArrayPush(&vtpk_file->root_propreties.lod_resolutions,
-                         resolution->num.dbl_value);
+            F64ArrayPush(&vtpk_file->root_propreties.lod_resolutions, resolution->num.dbl_value);
         }
     }
     {
@@ -238,8 +209,7 @@ static Color ColorFromRGBAString(String8 color) {
 }
 
 // returns the style information of a layer given its type.
-static VT_StyleMapValue StyleValueFromPaint(const JsonNode *paint,
-                                            VT_StylePaintType paint_type) {
+static VT_StyleMapValue StyleValueFromPaint(const JsonNode *paint, VT_StylePaintType paint_type) {
     switch (paint_type) {
     case FILL: {
         const JsonNode *fill_color = JsonFindKey(paint, String8FromCString("fill-color"));
@@ -256,12 +226,10 @@ static VT_StyleMapValue StyleValueFromPaint(const JsonNode *paint,
     case SYMBOL: {
         // TODO: icon color represents what exactly? tint? the icon has a color by
         // itself no?
-        return (VT_StyleMapValue){.type = paint_type,
-                                  .paint = {.icon_image = (String8){0}}};
+        return (VT_StyleMapValue){.type = paint_type, .paint = {.icon_image = (String8){0}}};
     } break;
     case CIRCLE: {
-        const JsonNode *circle_color =
-            JsonFindKey(paint, String8FromCString("circle-color"));
+        const JsonNode *circle_color = JsonFindKey(paint, String8FromCString("circle-color"));
         assert(circle_color->type == JSON_STRING);
         Color color = ColorFromRGBAString(circle_color->text_value);
         return (VT_StyleMapValue){.type = paint_type, .paint = {.circle_color = color}};
@@ -278,8 +246,7 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
     U32 file_index = FileIndexFromFileName(vtpk_file->archive, styles);
     U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
     char *file_content = arena_alloc(json_scratch.arena, file_size + 1);
-    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
-                                 file_size + 1, 0);
+    mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content, file_size + 1, 0);
 
     JsonNode *root = JsonNodeFromString(json_scratch.arena, file_content);
     assert(root->type == JSON_OBJECT);
@@ -289,8 +256,7 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
 
     for (JsonNode *layer_style = layers->children.first; layer_style != &json_node_null;
          layer_style = layer_style->next) {
-        const JsonNode *source_layer =
-            JsonFindKey(layer_style, String8FromCString("source-layer"));
+        const JsonNode *source_layer = JsonFindKey(layer_style, String8FromCString("source-layer"));
         assert(source_layer->type == JSON_STRING);
 
         // key
@@ -302,8 +268,7 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
             assert(filter->type == JSON_ARRAY);
             assert(filter->children.count == 3);
             assert(filter->children.first->type == JSON_STRING);
-            if (String8Equals(filter->children.first->text_value,
-                              String8FromCString("all"))) {
+            if (String8Equals(filter->children.first->text_value, String8FromCString("all"))) {
                 // account for the case that the filter specifies a quantifier ("all").
                 // Just take the first criterion and treat it as the sole filter.
                 // The second one should be irrelevant as the layer already only contains
@@ -315,12 +280,11 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
             const JsonNode *filter_val = filter->children.last;
             assert(filter_val->type == JSON_INTEGER);
             key.filter_key_hash = HashFromString8(0, filter_key->text_value);
-            key.filter_value = filter_val->num.u_value;
+            key.filter_value = filter_val->num.s_value;
         }
         U32 zoom_min = vtpk_file->root_propreties.lod_min;
         U32 zoom_max = vtpk_file->root_propreties.lod_max;
-        const JsonNode *zoom_node_min =
-            JsonFindKey(layer_style, String8FromCString("minzoom"));
+        const JsonNode *zoom_node_min = JsonFindKey(layer_style, String8FromCString("minzoom"));
         if (zoom_node_min != &json_node_null) {
             if (zoom_node_min->type == JSON_INTEGER) {
                 zoom_min = (U32)zoom_node_min->num.u_value;
@@ -330,8 +294,7 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
                 ERROR_MSG("invalid minzoom");
             }
         }
-        const JsonNode *zoom_node_max =
-            JsonFindKey(layer_style, String8FromCString("maxzoom"));
+        const JsonNode *zoom_node_max = JsonFindKey(layer_style, String8FromCString("maxzoom"));
         if (zoom_node_max != &json_node_null) {
             if (zoom_node_max->type == JSON_INTEGER) {
                 zoom_max = (U32)zoom_node_max->num.u_value;
@@ -358,8 +321,8 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
 }
 
 // returns the index of the style. -1 if not found.
-static S64 ValueFromLayerKeyFilter(VT_StyleMap *map, String8 layer_name,
-                                   String8 filter_key, U64 filter_value, U32 zoom) {
+static S64 ValueFromLayerKeyFilter(VT_StyleMap *map, String8 layer_name, String8 filter_key,
+                                   S64 filter_value, U32 zoom) {
     VT_StyleMapKey key = (VT_StyleMapKey){0};
     key.layer_hash = HashFromString8(0, layer_name);
     key.filter_key_hash = HashFromString8(0, filter_key);
@@ -382,9 +345,9 @@ static VtpkFile *VtpkParseFile(Arena *arena, const char *filepath) {
 }
 
 // returns true if the bounding box contains or touches the coordinate
-static bool AABBContains(AABB bbox, VectorTileCoordinate coord) {
-    return bbox.min_x <= coord.col && bbox.max_x >= coord.col &&
-           bbox.min_y <= coord.row && bbox.max_y >= coord.row;
+static bool AABBContains(AABB bbox, VT_Coordinate coord) {
+    return bbox.min_x <= coord.col && bbox.max_x >= coord.col && bbox.min_y <= coord.row &&
+           bbox.max_y >= coord.row;
 }
 
 // writes all indices of nodes that intersect/touch the AABB with desired zoom
@@ -417,22 +380,6 @@ static void QuadTreeFind(const QuadTreeNodeSlice quad_tree, S32 root, AABB bound
     }
 }
 
-// returns the corresponding arena for a given LOD-Level
-// TODO: come up with a better strategy of distributing the tiles
-// and evicting them from the cache (e.g. the arena).
-static Arena *GpuDataArenaFromLevel(S32 level) {
-    if (level < 8) {
-        return &gpu_data_arena_level0to7;
-    }
-    if (level < 13) {
-        return &gpu_data_arena_level8to12;
-    }
-    if (level < 16) {
-        return &gpu_data_arena_level13to15;
-    }
-    return &gpu_data_arena_level16;
-}
-
 // updates all vector tile handles that are referenced with the corresponding
 // indices into the quad tree
 static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indices) {
@@ -456,9 +403,9 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         const S32 tile_file_row = (tile->coordinate.row / 128) * 128;
         const S32 tile_file_col = (tile->coordinate.col / 128) * 128;
         char bundle_filename[40] = {0};
-        const S32 filename_size = snprintf(
-            bundle_filename, sizeof(bundle_filename), "p12/tile/L%02d/R%04xC%04x.bundle",
-            tile->coordinate.level, tile_file_row, tile_file_col);
+        const S32 filename_size =
+            snprintf(bundle_filename, sizeof(bundle_filename), "p12/tile/L%02d/R%04xC%04x.bundle",
+                     tile->coordinate.level, tile_file_row, tile_file_col);
         assert(filename_size == 30);
         const U32 file_index = FileIndexFromFileName(file->archive, bundle_filename);
         const U64 file_size = UncompressedFileSize(file->archive, file_index);
@@ -469,8 +416,8 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
 
             tile_parse_start = clock();
             file_content = arena_alloc(scratch.arena, file_size);
-            if (!mz_zip_reader_extract_to_mem(file->archive, file_index, file_content,
-                                              file_size, 0)) {
+            if (!mz_zip_reader_extract_to_mem(file->archive, file_index, file_content, file_size,
+                                              0)) {
                 ERROR_MSG("can not open zip archive: '%s'\n",
                           mz_zip_get_error_string(file->archive->m_last_error));
             }
@@ -520,8 +467,7 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         if (err == MZ_OK) {
             err = mz_inflate(&stream, MZ_FINISH);
             mz_inflateEnd(&stream);
-            // mz_inflate with MZ_FINISH returns MZ_STREAM_END on successful
-            // completion
+            // mz_inflate with MZ_FINISH returns MZ_STREAM_END on successful completion
             if (err == MZ_STREAM_END) {
                 err = MZ_OK;
             }
@@ -533,10 +479,9 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         decompress_end = clock();
         decompress_cpu_time_seconds =
             ((double)(decompress_end - decompress_start)) / CLOCKS_PER_SEC;
-        fprintf(stdout, "DECOMPRESSING TILE: c: %d, r: %d, l: %d: %f MS\n",
-                tile->coordinate.col, tile->coordinate.row, tile->coordinate.level,
+        fprintf(stdout, "DECOMPRESSING TILE: c: %d, r: %d, l: %d: %f MS\n", tile->coordinate.col,
+                tile->coordinate.row, tile->coordinate.level,
                 Thousand(decompress_cpu_time_seconds));
-        Arena *gpu_data_arena = GpuDataArenaFromLevel(tile->coordinate.level);
 
         {
             // PARSE TILE INTO GPU DATA
@@ -546,15 +491,17 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
             tile_parse_start = clock();
             // work done here
             // ------------------------------------------------------------------
-            tile->gpu_data = ParseMapboxVectorTile(gpu_data_arena, mvt_protobuf);
+            tile->gpu_data =
+                ParseMapboxVectorTile(tile->coordinate, mvt_protobuf, file->layer_styles);
             // ------------------------------------------------------------------
             tile_parse_end = clock();
             tile_parse_cpu_time_seconds =
                 ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
-            fprintf(stdout, "PARSING TILE: c: %d, r: %d, l: %d: %f MS\n",
-                    tile->coordinate.col, tile->coordinate.row, tile->coordinate.level,
+            fprintf(stdout, "PARSING TILE: c: %d, r: %d, l: %d: %f MS\n", tile->coordinate.col,
+                    tile->coordinate.row, tile->coordinate.level,
                     Thousand(tile_parse_cpu_time_seconds));
         }
+        assert(IsRenderTextureValid(tile->gpu_data.texture));
 
         tile->status = DATA_PRESENT;
     }
