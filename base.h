@@ -16,16 +16,16 @@
 
 #define DEBUG_MSG(...) fprintf(stderr, __VA_ARGS__);
 
-#define ERROR_MSG(...)                                                                   \
-    fprintf(stderr, __VA_ARGS__);                                                        \
+#define ERROR_MSG(...)                                                                             \
+    fprintf(stderr, __VA_ARGS__);                                                                  \
     exit(EXIT_FAILURE);
 
-#define ASSERT(expr, ...)                                                                \
-    do {                                                                                 \
-        if (!(expr)) {                                                                   \
-            fprintf(stderr, __VA_ARGS__);                                                \
-            exit(EXIT_FAILURE);                                                          \
-        }                                                                                \
+#define ASSERT(expr, ...)                                                                          \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, __VA_ARGS__);                                                          \
+            exit(EXIT_FAILURE);                                                                    \
+        }                                                                                          \
     } while (0);
 
 #if defined(_MSC_VER)
@@ -36,7 +36,7 @@
 #error need force inline for this compiler
 #endif
 
-#define CROSS(v0, v1, v2)                                                                \
+#define CROSS(v0, v1, v2)                                                                          \
     (((v1).x - (v0).x) * ((v2).y - (v0).y) - ((v1).y - (v0).y) * ((v2).x - (v0).x))
 
 #define DOT(v0, v1) ((v0).x * (v1).x + (v0).y * (v1).y)
@@ -279,18 +279,18 @@ global const U64 bit64 = (1ull << 63);
 #define ClampBot(X, B) Max(X, B)
 #define ClampTB(A, X, B) (((X) < (A)) ? (A) : ((X) > (B)) ? (B) : (X))
 
-#define Swap(T, a, b)                                                                    \
-    do {                                                                                 \
-        T t__ = (a);                                                                     \
-        (a) = (b);                                                                       \
-        (b) = t__;                                                                       \
+#define Swap(T, a, b)                                                                              \
+    do {                                                                                           \
+        T t__ = (a);                                                                               \
+        (a) = (b);                                                                                 \
+        (b) = t__;                                                                                 \
     } while (0)
 
 typedef struct coord2 {
     F64 x, y;
 } Coord2;
 
-#define Vector2FromCoord2(coord)                                                         \
+#define Vector2FromCoord2(coord)                                                                   \
     (Vector2) { .x = (F32)(coord).x, .y = (F32)(coord).y }
 
 typedef struct Triangle Triangle;
@@ -298,18 +298,27 @@ struct Triangle {
     S32 a, b, c;
 };
 
-typedef struct Slice Slice;
-struct Slice {
-    S32 start;
-    S32 length;
-};
+// a slice has a base and a count. Is a view into an array.
+//typedef struct Slice Slice;
+//struct Slice {
+//    S32 start;
+//    S32 count;
+//};
 
-// a range has a base and a count. Is a view into an array.
+// a range has a min and a max (exclusive). Is a view into an array.
 typedef struct Range Range;
 struct Range {
     S32 min;
     S32 count;
 };
+
+//INTERNAL_FORCEINLINE static Slice SliceFromRange(Range r) {
+//    return (Slice){.start = r.min, .count = r.max - r.min};
+//}
+//
+//INTERNAL_FORCEINLINE static Range RangeFromSlice(Slice s) {
+//    return (Range){.min = s.start, .max = s.start + s.count};
+//}
 
 DeclFixedArray(Coord2Array, Coord2);
 DeclFixedArray(Vector2Array, Vector2);
@@ -321,6 +330,7 @@ DeclFixedArray(S32Array, S32);
 DeclFixedArray(S64Array, S64);
 DeclFixedArray(F64Array, F64);
 DeclFixedArray(RangeArray, Range);
+//DeclFixedArray(SliceArray, Slice);
 typedef struct Screen Screen;
 struct Screen {
     S32 width, height;

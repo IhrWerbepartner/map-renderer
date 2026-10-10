@@ -137,18 +137,20 @@ struct VtpkFile {
 
 typedef struct VT_VectorData VT_VectorData;
 struct VT_VectorData {
-    S32Array vertex_soup;
-    S32Array triangle_colors; // RGBA
+    // mesh data
+    F32 *vertex_soup;
+    U8 *triangle_colors; // RGBA
     S32 vertex_count;
     S32 triangle_count;
 
-    Coord2Array texture_coords;    // holds the coordinates for every feature that
+    // texture data
+    Coord2Slice texture_coords;    // holds the coordinates for every feature that
                                    // gets transformed into a GPU texture.
-    RangeArray line_strings;       // a slice into coords for every line-string.
-    RangeArray multi_line_strings; // a slice into coords for every MULTI line-string. This is
+    RangeSlice line_strings;       // a slice into coords for every line-string.
+    RangeSlice multi_line_strings; // a slice into coords for every MULTI line-string. This is
                                    // equivalent to the number of LINESTRINGs in the Protobuf Data.
-    S64Array multi_line_style_indices;
+    S64Slice multi_line_style_indices;
 
-    RangeArray multi_points; // an index into coord for every (multi)-point.
-    S64Array mutli_point_style_indices;
+    RangeSlice multi_points; // an index into coord for every (multi)-point.
+    S64Slice mutli_point_style_indices;
 };

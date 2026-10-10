@@ -9,6 +9,8 @@
 #include <assert.h>
 #include <raylib.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
 
 // ------------------------  LIMITS  ------------------------
 #define MVT_TEXTURE_SIZE (512 * 4)
@@ -94,20 +96,32 @@ struct ProtobufValue {
 };
 DeclFixedArray(ProtobufValueArray, ProtobufValue);
 
-typedef struct LayerCoords LayerCoords;
-struct LayerCoords {
-    Coord2Array mesh_coords;       // holds the coordinates for every feature that gets
-                                   // transformed into a GPU mesh.
-    Coord2Array texture_coords;    // holds the coordinates for every feature that
-                                   // gets transformed into a GPU texture.
-    RangeArray polygons;           // holds range for every polygon (NOT FEATURE!).
-    RangeArray multi_polygons;     // holds range for every (multi)-polygon
-                                   // FEATURE! Indexes into polygon_coords.
+typedef struct VT_TileGeometry VT_TileGeometry;
+struct VT_TileGeometry {
+    Coord2Array mesh_coords;    // holds the coordinates for every feature that gets
+                                // transformed into a GPU mesh.
+    Coord2Array texture_coords; // holds the coordinates for every feature that
+                                // gets transformed into a GPU texture.
+                                //
+    // Definition taken from 4.3.4.4 Polygon Geometry Type.
+    // A ring is a single closed path, a polygon is: exteriorRing (interiorRing)*
+    // Multi polygons may have multiple polygons which in turn may consist of multiple rings
+    RangeArray rings;            // holds range for every polygon-ring (NOT FEATURE!).
+    RangeArray polygons;         // holds range for every (multi)-polygon
+                                 // FEATURE! Indexes into polygon_coords.
+    RangeArray polygon_features; // index into polygons and group them by features
+    S64Array
+        polygon_style_indices; // stores on style index per feature.
+                               // INVARIANT: polygon_features.count = polygon_style_indices.count
+
     RangeArray line_strings;       // a slice into coords for every line-string.
     RangeArray multi_line_strings; // a slice into coords for every MULTI line-string.
                                    // if this only has one entry for a line string it is
                                    // a single line string. otherwise a multi line string
-    RangeArray multi_points;       // an index into coord for every (multi)-point.
+    S64Array multi_line_style_indices;
+
+    RangeArray multi_points; // an index into coord for every (multi)-point.
+    S64Array mutli_point_style_indices;
 };
 
 typedef enum MVT_PlotterCommand MVT_PlotterCommand;
@@ -302,10 +316,13 @@ static ProtobufValue ProtobufParseValue(MVT_ProtobufData data, U64 *ip) {
     return val;
 }
 
+// Parse a paramter integer. See spec at 4.3.2.
 INTERNAL_FORCEINLINE static S32 ParameterFromProtobufData(const MVT_ProtobufData data, U64 *ip) {
     return ParameterIntegerFromZigzagInteger(U32FromVarInt128(data, ip));
 }
 
+// Determine the winding order of a polygon by searching for the bottom right vertex and then
+// performing the cross product including the neighbors this vertex has.
 static WindingOrder WindingOrderFromCoords(Coord2Slice coords) {
     Coord2 coord_min = (Coord2){.x = min_F64, .y = max_F64};
     S32 index_min = 0;
@@ -323,73 +340,86 @@ static WindingOrder WindingOrderFromCoords(Coord2Slice coords) {
                                                                        : COUNTER_CLOCKWISE;
 }
 
+// Read 2 Parameter Integers (4.3.2) and advance the plotter creating a point
 static void PlotterReadParametersAndCreatePoint(MVT_ProtobufData data, U64 *ip,
-                                                MVT_Plotter *plotter, Coord2Array *coords) {
+                                                MVT_Plotter *plotter, Coord2Array *coords,
+                                                F64 scale_factor) {
     plotter->pos_x += ParameterFromProtobufData(data, ip);
     plotter->pos_y += ParameterFromProtobufData(data, ip);
-    Coord2ArrayPush(coords, (Coord2){.x = plotter->pos_x, .y = plotter->pos_y});
+    Coord2ArrayPush(
+        coords, (Coord2){.x = plotter->pos_x * scale_factor, .y = plotter->pos_y * scale_factor});
 }
 
-static void MultiPolygonFromProtobufData(VT_VectorData *tile_vector_data,
-                                         const MVT_ProtobufData data, const Range geometry) {
-    Temp_Arena_Memory scratch = GetScratch();
-    Coord2Array coords = Coord2ArrayNew(scratch.arena, geometry.count);
-    RangeArray polygons = RangeArrayNew(scratch.arena, geometry.count);
+// Parse Polygon Coords. Specified at 4.3.4.4. Polygon Geometry Type.
+// A polygon MUST consist of an exterior ring and zero or more interior rings.
+static void MultiPolygonFromProtobufData(VT_TileGeometry *tile_geometry,
+                                         const MVT_ProtobufData data, const Range geometry,
+                                         const S64 style_index, const F64 scale_factor) {
 
     MVT_Plotter plotter = {0};
-    S32 polygon_ring_start = polygons.count;
-    S32 polygon_vertex_start = coords.count;
+    S32 polygon_ring_start = tile_geometry->rings.count;
+    S32 polygon_vertex_start = tile_geometry->mesh_coords.count;
+    S32 feature_start = tile_geometry->polygons.count;
     for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
         const MVT_PlotterInstruction instruction = PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
         case MOVE_TO: {
             assert(instruction.count == 1);
-            PlotterReadParametersAndCreatePoint(data, &ip, &plotter, &coords);
+            PlotterReadParametersAndCreatePoint(data, &ip, &plotter, &tile_geometry->mesh_coords,
+                                                scale_factor);
         } break;
         case LINE_TO: {
             assert(instruction.count > 1);
             for (U32 i = 0; i < instruction.count; i += 1) {
-                PlotterReadParametersAndCreatePoint(data, &ip, &plotter, &coords);
+                PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
+                                                    &tile_geometry->mesh_coords, scale_factor);
             }
         } break;
         case CLOSE_PATH: {
-            // if we encounter a COUNTER_CLOCKWISE polygon and have encountered a polygon
-            // already append the previous to the multipolygon list.
+            // if we encounter a COUNTER_CLOCKWISE (exterior) ring and have encountered a ring
+            // already, append the previous polygon to the polygon list.
             assert(instruction.count == 1);
-            const WindingOrder winding =
-                WindingOrderFromCoords(Coord2SliceFromArrayStart(&coords, polygon_vertex_start));
+            const WindingOrder winding = WindingOrderFromCoords(
+                Coord2SliceFromArrayStart(&tile_geometry->mesh_coords, polygon_vertex_start));
             switch (winding) {
             case COUNTER_CLOCKWISE: {
-                if (coords->polygons.count > polygon_ring_start) {
-                    RangeArrayPush(&coords->multi_polygons,
-                                   (Range){.min = polygon_ring_start,
-                                           .count = coords->polygons.count - polygon_ring_start});
-                    polygon_ring_start = coords->polygons.count;
+                if (tile_geometry->rings.count > polygon_ring_start) {
+                    RangeArrayPush(
+                        &tile_geometry->polygons,
+                        (Range){.min = polygon_ring_start,
+                                .count = tile_geometry->rings.count - polygon_ring_start});
+                    polygon_ring_start = tile_geometry->rings.count;
                 }
             } break;
             case CLOCKWISE:
                 break;
             }
-            RangeArrayPush(
-                &coords->polygons,
-                (Range){polygon_vertex_start, coords->mesh_coords.count - polygon_vertex_start});
-            polygon_vertex_start = coords->mesh_coords.count;
+            RangeArrayPush(&tile_geometry->rings,
+                           (Range){polygon_vertex_start,
+                                   tile_geometry->mesh_coords.count - polygon_vertex_start});
+            polygon_vertex_start = tile_geometry->mesh_coords.count;
         } break;
         }
     }
+    RangeArrayPush(&tile_geometry->polygons,
+                   (Range){.min = polygon_ring_start,
+                           .count = tile_geometry->rings.count - polygon_ring_start});
+
+    // add an entry to the feature list with the range and the corresponding style
     RangeArrayPush(
-        &coords->multi_polygons,
-        (Range){.min = polygon_ring_start, .count = coords->polygons.count - polygon_ring_start});
-    temp_arena_memory_end(scratch);
+        &tile_geometry->polygon_features,
+        (Range){.min = feature_start, .count = tile_geometry->polygons.count - feature_start});
+    S64ArrayPush(&tile_geometry->multi_line_style_indices, style_index);
 }
 
-static void MultiLineStringFromProtobufData(VT_VectorData *tile_vector_data,
-                                            const MVT_ProtobufData data, const Range geometry) {
+static void MultiLineStringFromProtobufData(VT_TileGeometry *tile_geometry,
+                                            const MVT_ProtobufData data, const Range geometry,
+                                            const S64 style_index, const F64 scale_factor) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
     MVT_Plotter plotter = {0};
-    S32 line_string_start = tile_vector_data->texture_coords.count;
-    const S32 multi_line_string_start = tile_vector_data->line_strings.count;
+    S32 line_string_start = tile_geometry->texture_coords.count;
+    const S32 multi_line_string_start = tile_geometry->line_strings.count;
     bool encountered_move_to = false;
     for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
         const MVT_PlotterInstruction instruction = PlotterInstructionFromProtobufData(data, &ip);
@@ -397,23 +427,23 @@ static void MultiLineStringFromProtobufData(VT_VectorData *tile_vector_data,
         case MOVE_TO: {
             if (encountered_move_to) {
                 const S32 line_string_coordinate_count =
-                    tile_vector_data->texture_coords.count - line_string_start;
+                    tile_geometry->texture_coords.count - line_string_start;
                 assert(line_string_coordinate_count > 0);
                 RangeArrayPush(
-                    &tile_vector_data->line_strings,
+                    &tile_geometry->line_strings,
                     (Range){.min = line_string_start, .count = line_string_coordinate_count});
-                line_string_start = tile_vector_data->texture_coords.count;
+                line_string_start = tile_geometry->texture_coords.count;
             }
             assert(instruction.count == 1);
-            PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
-                                                &tile_vector_data->texture_coords);
+            PlotterReadParametersAndCreatePoint(data, &ip, &plotter, &tile_geometry->texture_coords,
+                                                scale_factor);
             encountered_move_to = true;
         } break;
         case LINE_TO: {
             assert(instruction.count > 0);
             for (U32 i = 0; i < instruction.count; i += 1) {
                 PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
-                                                    &tile_vector_data->texture_coords);
+                                                    &tile_geometry->texture_coords, scale_factor);
             }
         } break;
         case CLOSE_PATH: {
@@ -422,22 +452,22 @@ static void MultiLineStringFromProtobufData(VT_VectorData *tile_vector_data,
         }
     }
     const S32 line_string_coordinate_count =
-        tile_vector_data->texture_coords.count - line_string_start;
+        tile_geometry->texture_coords.count - line_string_start;
     assert(line_string_coordinate_count > 0);
-    RangeArrayPush(&tile_vector_data->line_strings,
+    RangeArrayPush(&tile_geometry->line_strings,
                    (Range){.min = line_string_start, .count = line_string_coordinate_count});
-    RangeArrayPush(
-        &tile_vector_data->multi_line_strings,
-        (Range){.min = multi_line_string_start,
-                .count = tile_vector_data->line_strings.count - multi_line_string_start});
+    RangeArrayPush(&tile_geometry->multi_line_strings,
+                   (Range){.min = multi_line_string_start,
+                           .count = tile_geometry->line_strings.count - multi_line_string_start});
+    S64ArrayPush(&tile_geometry->multi_line_style_indices, style_index);
 }
 
-static void PointFromProtobufData(VT_VectorData *tile_vector_data, const MVT_ProtobufData data,
-                                  const Range geometry) {
+static void PointFromProtobufData(VT_TileGeometry *tile_geometry, const MVT_ProtobufData data,
+                                  const Range geometry, const S64 style_index, F64 scale_factor) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
     MVT_Plotter plotter = {0};
-    const S32 point_start = tile_vector_data->texture_coords.count;
+    const S32 point_start = tile_geometry->texture_coords.count;
     for (U64 ip = (U64)geometry.min; ip < ((U64)geometry.min + (U64)geometry.count);) {
         const MVT_PlotterInstruction instruction = PlotterInstructionFromProtobufData(data, &ip);
         switch (instruction.command) {
@@ -445,7 +475,7 @@ static void PointFromProtobufData(VT_VectorData *tile_vector_data, const MVT_Pro
             assert(instruction.count > 0);
             for (U32 i = 0; i < instruction.count; i += 1) {
                 PlotterReadParametersAndCreatePoint(data, &ip, &plotter,
-                                                    &tile_vector_data->texture_coords);
+                                                    &tile_geometry->texture_coords, scale_factor);
             }
         } break;
         case LINE_TO: {
@@ -456,20 +486,22 @@ static void PointFromProtobufData(VT_VectorData *tile_vector_data, const MVT_Pro
         } break;
         }
     }
-    RangeArrayPush(&tile_vector_data->multi_points,
-                   (Range){point_start, tile_vector_data->texture_coords.count - point_start});
+    RangeArrayPush(&tile_geometry->multi_points,
+                   (Range){point_start, tile_geometry->texture_coords.count - point_start});
+    S64ArrayPush(&tile_geometry->mutli_point_style_indices, style_index);
 }
 
 // parses Features and writes the coords into the provided layercoords for triangulation ->
 // mesh/texture generation
-static void FeaturesFromProtobuf(VT_VectorData *tile_vector_data, MVT_ProtobufDataSlice features,
+static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDataSlice features,
                                  String8 layer_name, String8Slice keys, ProtobufValueSlice values,
-                                 VT_Coordinate tile_coordinate, VT_StyleMap *style_map) {
+                                 VT_Coordinate tile_coordinate, VT_StyleMap *style_map,
+                                 F64 scale_factor) {
     for (S32 i = 0; i < features.count; i += 1) {
         MVT_ProtobufData feature = features.v[i];
 
         GeometryType geometry_type = GEOMETRY_TYPE_UNKNOWN;
-        S32 feature_style_index = -1;
+        S64 feature_style_index = -1;
         Range geometry_range = {0};
         U64 ip = 0;
 
@@ -526,85 +558,69 @@ static void FeaturesFromProtobuf(VT_VectorData *tile_vector_data, MVT_ProtobufDa
             assert(saved_ip < ip); // ensure we are making progress
         }
         switch (geometry_type) {
-            // TODO: figure out how to convert these to meshes/textures right here.
-            // Maybe store the style information in a seperate array alongside the parsed geometry
-            // to batch convert it once the layer has been parsed.
-            // As overlapping triangles are not a problem consider drawing everything in one mesh
-            // per layer.
         case GEOMETRY_TYPE_UNKNOWN: {
             ERROR_MSG("UNKNOWN geoemtry not supported")
         } break;
         case GEOMETRY_TYPE_POINT: {
-            PointFromProtobufData(tile_vector_data, feature, geometry_range);
-            S64ArrayPush(&tile_vector_data->mutli_point_style_indices, feature_style_index);
-
+            PointFromProtobufData(tile_geometry, feature, geometry_range, feature_style_index,
+                                  scale_factor);
         } break;
         case GEOMETRY_TYPE_LINESTRING: {
-            MultiLineStringFromProtobufData(tile_vector_data, feature, geometry_range);
-            S64ArrayPush(&tile_vector_data->multi_line_style_indices, feature_style_index);
+            MultiLineStringFromProtobufData(tile_geometry, feature, geometry_range,
+                                            feature_style_index, scale_factor);
         } break;
         case GEOMETRY_TYPE_POLYGON: {
-            MultiPolygonFromProtobufData(tile_vector_data, feature, geometry_range);
+            MultiPolygonFromProtobufData(tile_geometry, feature, geometry_range,
+                                         feature_style_index, scale_factor);
         } break;
         }
     }
-    if (layer_coords->mesh_coords.count > 0 || layer_coords->texture_coords.count > 0) {
-        if (layer_coords->texture_coords.count > 0) {
-            LayerTextureFromCoords(layer_coords, extent);
-        }
-        if (layer_coords->mesh_coords.count > 0) {
-            LayerMeshFromCoords(arena, &meshes, layer_coords, extent);
-        }
-    }
 }
 
-// creates a new layer with very conservative size estimates
-static LayerCoords *CreateNewLayer(Arena *arena, S32 layer_size) {
-    LayerCoords *layer = arena_alloc(arena, sizeof(LayerCoords));
-    layer->mesh_coords = Coord2ArrayNew(arena, layer_size);
-    layer->texture_coords = Coord2ArrayNew(arena, layer_size);
-    layer->line_strings = RangeArrayNew(arena, layer_size);
-    layer->multi_line_strings = RangeArrayNew(arena, layer_size);
-    layer->polygons = RangeArrayNew(arena, layer_size);
-    layer->multi_polygons = RangeArrayNew(arena, layer_size);
-    layer->multi_points = RangeArrayNew(arena, layer_size);
-    return layer;
-}
-
-static void LayerTextureFromCoords(LayerCoords *layer_coords, U32 tile_extent) {
-    const F32 scale_factor = (F32)MVT_TEXTURE_SIZE / (F32)tile_extent;
-    for (S32 i = 0; i < layer_coords->multi_points.count; i += 1) {
-        const Range multi_point = layer_coords->multi_points.d[i];
+// Draw all vector data to the specified render texture.
+// The corresponding styles are taken from the styles map provided.
+static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleMap *styles,
+                                      const RenderTexture2D *texture) {
+    // TODO: apply styling
+    BeginTextureMode(*texture);
+    ClearBackground(BLANK);
+    for (S32 i = 0; i < data->multi_points.count; i += 1) {
+        const Range multi_point = data->multi_points.v[i];
+        const VT_StyleMapValue point_style = styles[data->mutli_point_style_indices.v[i]].value;
+        assert(point_style.type == SYMBOL || point_style.type == CIRCLE);
         for (S32 j = multi_point.min; j < multi_point.count; j += 1) {
-            Coord2 point = layer_coords->texture_coords.d[j];
-            point.x *= scale_factor;
-            point.y *= scale_factor;
-            DrawCircleV(Vector2FromCoord2(point), 15.f, GREEN);
-        }
-    }
-    for (S32 multi_line_string_index = 0;
-         multi_line_string_index < layer_coords->multi_line_strings.count;
-         multi_line_string_index += 1) {
-        const Range multi_line_string = layer_coords->multi_line_strings.d[multi_line_string_index];
-        for (S32 line_string_index = multi_line_string.min;
-             line_string_index < multi_line_string.min + multi_line_string.count;
-             line_string_index += 1) {
-            const Range line_string = layer_coords->line_strings.d[line_string_index];
-            for (S32 k = line_string.min; k < line_string.min + line_string.count - 1; k += 1) {
-                Vector2 a = Vector2FromCoord2(layer_coords->texture_coords.d[k]);
-                a.x *= scale_factor;
-                a.y *= scale_factor;
-                Vector2 b = Vector2FromCoord2(layer_coords->texture_coords.d[k + 1]);
-                b.x *= scale_factor;
-                b.y *= scale_factor;
-                DrawLineEx(a, b, 5.f, RED);
+            const Vector2 point = Vector2FromCoord2(data->texture_coords.v[j]);
+            switch (point_style.type) {
+            case SYMBOL: {
+                // TODO: fetch symbol sprite
+            } break;
+            case CIRCLE:
+                DrawCircleV(point, 15.f, point_style.paint.circle_color);
+                break;
+            default:
+                ERROR_MSG("unreachable");
             }
         }
     }
+    for (S32 mls_index = 0; mls_index < data->multi_line_strings.count; mls_index += 1) {
+        const Range multi_line_string = data->multi_line_strings.v[mls_index];
+        const VT_StyleMapValue line_style =
+            styles[data->multi_line_style_indices.v[mls_index]].value;
+        assert(line_style.type == LINE);
+        for (S32 ls_index = multi_line_string.min;
+             ls_index < multi_line_string.min + multi_line_string.count; ls_index += 1) {
+            const Range line_string = data->line_strings.v[ls_index];
+            for (S32 k = line_string.min; k < line_string.min + line_string.count - 1; k += 1) {
+                const Vector2 a = Vector2FromCoord2(data->texture_coords.v[k]);
+                const Vector2 b = Vector2FromCoord2(data->texture_coords.v[k + 1]);
+                DrawLineEx(a, b, 5.f, line_style.paint.line_color);
+            }
+        }
+    }
+    EndTextureMode();
 }
 
-static Mesh MeshFromTriangles(Arena *arena, const TriangleArray *triangles,
-                              const Coord2Slice coords, F32 scale_factor) {
+static Mesh MeshFromTriangles(const TriangleArray *triangles, const Coord2Slice coords) {
 
     // create a big mesh (triangle soup) to avoid unsigned short limit for
     // indicdes in openGL
@@ -617,53 +633,48 @@ static Mesh MeshFromTriangles(Arena *arena, const TriangleArray *triangles,
     S32 v = 0;
     for (S32 i = 0; i < triangles->count; i++) {
         Triangle t = triangles->d[i];
-        mesh.vertices[v++] = (float)coords.v[t.a].x * scale_factor;
-        mesh.vertices[v++] = (float)coords.v[t.a].y * scale_factor + 512;
+        mesh.vertices[v++] = (float)coords.v[t.a].x;
+        mesh.vertices[v++] = (float)coords.v[t.a].y + 512;
         mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.c].x * scale_factor;
-        mesh.vertices[v++] = (float)coords.v[t.c].y * scale_factor + 512;
+        mesh.vertices[v++] = (float)coords.v[t.c].x;
+        mesh.vertices[v++] = (float)coords.v[t.c].y + 512;
         mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.b].x * scale_factor;
-        mesh.vertices[v++] = (float)coords.v[t.b].y * scale_factor + 512;
+        mesh.vertices[v++] = (float)coords.v[t.b].x;
+        mesh.vertices[v++] = (float)coords.v[t.b].y + 512;
         mesh.vertices[v++] = 0.f;
     }
 
     assert(mesh.vertexCount > 2);
     assert(mesh.triangleCount > 0);
-    UploadMesh(&mesh, false);
     return mesh;
 }
 
 // creates a mesh from the relevant coords and polygon
-// stores the mesh triangle soup on the arena passed.
-static void LayerMeshFromCoords(Arena *arena, Mesh meshes, LayerCoords *layer_coords,
-                                U32 tile_extent) {
+// stores the mesh triangle soup on the vector_data_arena.
+static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
+                                    const VT_TileGeometry *src_geometry,
+                                    const VT_StyleMap *style_map) {
     Temp_Arena_Memory scratch = GetScratch();
 
-    // this scaling is necessary as different tiles may have a different extent.
-    // This ensuers the parsed coordinates are within MVT_MESH_SIZE x MVT_MESH_SIZE.
-    const F32 scale_factor = (F32)MVT_MESH_SIZE / (F32)tile_extent;
+    // account for some triangulation that might violate #triangulated triangles = #coords - 2.
+    TriangleArray triangles = TriangleArrayNew(scratch.arena, src_geometry->mesh_coords.count * 2);
+    RangeArray triangle_colors = RangeArrayNew(scratch.arena, src_geometry->mesh_coords.count * 2);
+    S32Array contour_sizes = S32ArrayNew(scratch.arena, src_geometry->polygons.count);
 
-    TriangleArray triangles = TriangleArrayNew(
-        scratch.arena,
-        layer_coords->mesh_coords.count * 2); // account for some triangulation that might
-                                              // violate #triangulated triangles = #coords - 2.
-    S32Array contour_sizes = S32ArrayNew(scratch.arena, layer_coords->polygons.count);
-    for (S32 i = 0; i < layer_coords->multi_polygons.count; i += 1) {
-        const Range polygon_contours = layer_coords->multi_polygons.d[i];
-        const S32 start_index = layer_coords->polygons.d[polygon_contours.min].min;
+    for (S32 i = 0; i < data->multi_polygons.count; i += 1) {
+        const Range polygon_contours = data->multi_polygons.d[i];
+        const S32 start_index = data->polygons.d[polygon_contours.min].min;
         const S32 triangle_index_first = triangles.count;
         S32 polygon_vertex_count = 0;
         for (S32 j = polygon_contours.min; j < polygon_contours.min + polygon_contours.count;
              j += 1) {
-            const S32 contour_vertex_count = layer_coords->polygons.d[j].count;
+            const S32 contour_vertex_count = data->polygons.d[j].count;
             S32ArrayPush(&contour_sizes, contour_vertex_count);
             polygon_vertex_count += contour_vertex_count;
         }
-        Earcut(
-            &triangles,
-            Coord2SliceFromArrayExt(&layer_coords->mesh_coords, start_index, polygon_vertex_count),
-            S32SliceFromArray(&contour_sizes));
+        Earcut(&triangles,
+               Coord2SliceFromArrayExt(&data->mesh_coords, start_index, polygon_vertex_count),
+               S32SliceFromArray(&contour_sizes));
         // we need to fix the indices as they are local to a polygon, but they
         // now point into the global coordinate array.
         for (S32 j = triangle_index_first; j < triangles.count; j += 1) {
@@ -672,18 +683,61 @@ static void LayerMeshFromCoords(Arena *arena, Mesh meshes, LayerCoords *layer_co
             triangle->b += start_index;
             triangle->c += start_index;
             assert(triangle->a >= start_index);
-            assert(triangle->a < layer_coords->mesh_coords.count);
+            assert(triangle->a < data->mesh_coords.count);
             assert(triangle->b >= start_index);
-            assert(triangle->b < layer_coords->mesh_coords.count);
+            assert(triangle->b < data->mesh_coords.count);
             assert(triangle->c >= start_index);
-            assert(triangle->c < layer_coords->mesh_coords.count);
+            assert(triangle->c < data->mesh_coords.count);
         }
         S32ArrayReset(&contour_sizes);
     }
-    MeshArrayPush(meshes, MeshFromTriangles(arena, &triangles,
-                                            Coord2SliceFromArray(&layer_coords->mesh_coords),
-                                            scale_factor));
+
+    // create a big mesh (triangle soup) to avoid unsigned short limit for
+    // indicdes in openGL
+    S32 vertex_soup_count = triangles.count * 3;
+    Mesh mesh = {
+        .vertexCount = vertex_soup_count,
+        .vertices = arena_alloc_array(arena, float, (size_t)vertex_soup_count * 3),
+        .triangleCount = triangles->count,
+    };
+    S32 v = 0;
+    for (S32 i = 0; i < triangles->count; i++) {
+        Triangle t = triangles->d[i];
+        mesh.vertices[v++] = (float)coords.v[t.a].x;
+        mesh.vertices[v++] = (float)coords.v[t.a].y + 512;
+        mesh.vertices[v++] = 0.f;
+        mesh.vertices[v++] = (float)coords.v[t.c].x;
+        mesh.vertices[v++] = (float)coords.v[t.c].y + 512;
+        mesh.vertices[v++] = 0.f;
+        mesh.vertices[v++] = (float)coords.v[t.b].x;
+        mesh.vertices[v++] = (float)coords.v[t.b].y + 512;
+        mesh.vertices[v++] = 0.f;
+    }
+
+    assert(mesh.vertexCount > 2);
+    assert(mesh.triangleCount > 0);
+    return mesh;
     temp_arena_memory_end(scratch);
+}
+
+// creates a new tile with very conservative size estimates
+static VT_TileGeometry *CreateNewTile(Arena *arena, S32 tile_size) {
+    VT_TileGeometry *tile = arena_alloc(arena, sizeof(VT_TileGeometry));
+    tile->mesh_coords = Coord2ArrayNew(arena, tile_size);
+    tile->texture_coords = Coord2ArrayNew(arena, tile_size);
+
+    tile->rings = RangeArrayNew(arena, tile_size);
+    tile->polygons = RangeArrayNew(arena, tile_size);
+    tile->polygon_features = RangeArrayNew(arena, tile_size);
+    tile->polygon_style_indices = S64ArrayNew(arena, tile_size);
+
+    tile->line_strings = RangeArrayNew(arena, tile_size);
+    tile->multi_line_strings = RangeArrayNew(arena, tile_size);
+    tile->multi_line_style_indices = S64ArrayNew(arena, tile_size);
+
+    tile->multi_points = RangeArrayNew(arena, tile_size);
+    tile->mutli_point_style_indices = S64ArrayNew(arena, tile_size);
+    return tile;
 }
 
 // parse a MVT and store it as a mesh/texture on the arena given.
@@ -694,13 +748,9 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
                                                 MVT_ProtobufData data, VT_StyleMap *style_map) {
     Temp_Arena_Memory scratch = GetScratch();
     S32 layer_count = LayerCount(data);
+    VT_TileGeometry *tile_geometry =
+        CreateNewTile(scratch.arena, safe_cast_s32_from_u64(data.size));
     DEBUG_MSG("layer count: %d\n", layer_count);
-
-    // tile vector data, seperated in mesh (polygons) and texture, sprites/lines/circle
-    Mesh layer_mesh = (Mesh){0};
-    const RenderTexture2D texture = LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
-    BeginTextureMode(texture);
-    ClearBackground(BLANK);
 
     U64 ip = 0;
     S32 parsed_layers = 0;
@@ -710,13 +760,11 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
         assert(layer_tag.field_number == 3);
         assert(layer_tag.wire_type == LEN);
         const U32 layer_size = U32FromVarInt128(data, &ip);
-        LayerCoords *layer_coords =
-            CreateNewLayer(scratch.arena, safe_cast_s32_from_u32(layer_size));
         const U64 layer_end = ip + layer_size;
         String8Array layer_keys = String8ArrayNew(scratch.arena, LAYER_KEYS_MAX);
         ProtobufValueArray layer_values = ProtobufValueArrayNew(scratch.arena, LAYER_VALUES_MAX);
 
-        U32 extent = 4096; // default extent from spec
+        U32 layer_extent = 4096; // default extent from spec
         MVT_ProtobufDataArray layer_features =
             MVT_ProtobufDataArrayNew(scratch.arena, LAYER_FEATURES_MAX);
         String8 layer_name = {0};
@@ -762,7 +810,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
             } break;
             case LAYER_FIELD_EXTENT: {
                 assert(layer_field.wire_type == VARINT);
-                extent = U32FromVarInt128(data, &ip);
+                layer_extent = U32FromVarInt128(data, &ip);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
             case LAYER_FIELD_VERSION: {
@@ -781,17 +829,51 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
 
         // compute the data we need on the GPU
         assert(layer_name.buf); // layer name is required
-        FeaturesFromProtobuf(MVT_ProtobufDataSliceFromArray(&layer_features), layer_coords,
+        // scale every layer to a uniform MVT_MESH_SIZE.
+        const F64 scale_factor = (F64)MVT_MESH_SIZE / (F64)layer_extent;
+        FeaturesFromProtobuf(tile_geometry, MVT_ProtobufDataSliceFromArray(&layer_features),
                              layer_name, String8SliceFromArray(&layer_keys),
-                             ProtobufValueSliceFromArray(&layer_values), tile_coordinate,
-                             style_map);
+                             ProtobufValueSliceFromArray(&layer_values), tile_coordinate, style_map,
+                             scale_factor);
         parsed_layers += 1;
         if (parsed_layers == layer_count) {
             assert(ip == data.size);
         }
     }
-    EndTextureMode();
-    assert(layer_mesh.vertexCount > 0 || texture.id);
+
+    // stores the data on the vector_data_arena for persistant storage.
+#define VectorDataFieldFromGeometry(Type, dst_slice, src_array)                                    \
+    dst_slice =                                                                                    \
+        (Type##Slice){.v = arena_alloc_array(&vector_data_arena, Type, (size_t)(src_array).count), \
+                      .count = (src_array).count};                                                 \
+    memcpy((dst_slice).v, &tile_geometry->texture_coords,                                          \
+           (size_t)tile_geometry->texture_coords.count * sizeof(Type));
+
+    // tile vector data, seperated in mesh (polygons) and texture, sprites/lines/circle
+    // Transform the tile geometry into vector data that we can store on the GPU and cache for
+    // reuse.
+    VT_VectorData vector_data = {0};
+    VectorDataFieldFromGeometry(Coord2, vector_data.texture_coords, tile_geometry->texture_coords);
+    VectorDataFieldFromGeometry(Range, vector_data.line_strings, tile_geometry->line_strings);
+    VectorDataFieldFromGeometry(Range, vector_data.multi_line_strings,
+                                tile_geometry->multi_line_strings);
+    VectorDataFieldFromGeometry(S64, vector_data.multi_line_style_indices,
+                                tile_geometry->multi_line_style_indices);
+
+    VectorDataFieldFromGeometry(Range, vector_data.multi_points, tile_geometry->multi_points);
+    VectorDataFieldFromGeometry(S64, vector_data.mutli_point_style_indices,
+                                tile_geometry->mutli_point_style_indices);
+
+    // render to texture
+    const RenderTexture2D texture = LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
+    TileTextureFromVectorData(&vector_data, style_map, &texture);
+
+    // generate mesh
+    Mesh tile_mesh = MeshFromPolygonGeometry(&vector_data, tile_geometry, style_map);
+
+    // cache vector data for quick redraw
+    hmput(tile_coordinate, vector_data);
+
     temp_arena_memory_end(scratch);
     return (VectorTileGPU_Data){layer_mesh, texture};
 }

@@ -502,6 +502,7 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
                     Thousand(tile_parse_cpu_time_seconds));
         }
         assert(IsRenderTextureValid(tile->gpu_data.texture));
+        UploadMesh(&tile->gpu_data.mesh, false);
 
         tile->status = DATA_PRESENT;
     }
