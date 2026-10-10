@@ -205,6 +205,8 @@ PlotterInstructionFromProtobufData(MVT_ProtobufData data, U64 *ip) {
     return InstructionFromCommandInteger(command_integer);
 }
 
+// see "Message Structure" in https://protobuf.dev/programming-guides/encoding
+// the protobuf value is a 32bit value that stores (field_number << 3) | wire_type
 typedef struct ProtobufTag ProtobufTag;
 struct ProtobufTag {
     U32 field_number;
@@ -289,7 +291,8 @@ static S32 LayerCount(const MVT_ProtobufData data) {
 
 static ProtobufValue ProtobufParseValue(MVT_ProtobufData data, U64 *ip) {
     ProtobufValue val = {0};
-    val.type = data.v[*ip];
+    const ProtobufTag tag = TagFromProtobufData(data, ip);
+    val.type = tag.field_number;
     switch (val.type) {
     case VALUE_STRING: {
         val.value.string = String8FromProtobufData(data, ip);
@@ -572,7 +575,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
         }
         switch (geometry_type) {
         case GEOMETRY_TYPE_UNKNOWN: {
-            ERROR_MSG("UNKNOWN geoemtry not supported")
+            ERROR_MSG("UNKNOWN geometry not supported")
         } break;
         case GEOMETRY_TYPE_POINT: {
             PointFromProtobufData(tile_geometry, feature, geometry_range, feature_style_index,
@@ -832,6 +835,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
                 const U32 feature_size = U32FromVarInt128(data, &ip);
                 MVT_ProtobufDataArrayPush(&layer_features,
                                           (MVT_ProtobufData){data.v + ip, feature_size});
+                ip += feature_size;
                 assert(ip + feature_size < data.size);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
