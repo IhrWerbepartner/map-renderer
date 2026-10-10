@@ -5,7 +5,6 @@
 #include "../string8.h"
 #include "../triangulate/earcut.h"
 #include "types.h"
-#include "vtpk_reader.h"
 #include <assert.h>
 #include <raylib.h>
 #include <stdbool.h>
@@ -19,15 +18,18 @@
 #define LAYER_VALUES_MAX (1000)
 #define LAYER_FEATURES_MAX (10000)
 
+// ------------------------  STATIC DATA  ---------------------
 static unsigned char vector_data_buf[MB(500)] = {0};
 static Arena vector_data_arena = (Arena){vector_data_buf, sizeof(vector_data_buf), 0, 0};
 
-// TODO: figure out where to store the mesh arrays.
+typedef struct VT_VectorDataMap VT_VectorDataMap;
 struct VT_VectorDataMap {
     VT_Coordinate key;
     VT_VectorData value;
 };
+static VT_VectorDataMap *vector_data_map = NULL;
 
+// -----------------------  TYPES  ------------------------
 typedef struct MVT_ProtobufData MVT_ProtobufData;
 struct MVT_ProtobufData {
     U8 *v;
@@ -106,21 +108,21 @@ struct VT_TileGeometry {
     // Definition taken from 4.3.4.4 Polygon Geometry Type.
     // A ring is a single closed path, a polygon is: exteriorRing (interiorRing)*
     // Multi polygons may have multiple polygons which in turn may consist of multiple rings
-    RangeArray rings;            // holds range for every polygon-ring (NOT FEATURE!).
-    RangeArray polygons;         // holds range for every (multi)-polygon
+    SliceArray rings;            // holds range for every polygon-ring (NOT FEATURE!).
+    SliceArray polygons;         // holds range for every (multi)-polygon
                                  // FEATURE! Indexes into polygon_coords.
-    RangeArray polygon_features; // index into polygons and group them by features
+    SliceArray polygon_features; // index into polygons and group them by features
     S64Array
         polygon_style_indices; // stores on style index per feature.
                                // INVARIANT: polygon_features.count = polygon_style_indices.count
 
-    RangeArray line_strings;       // a slice into coords for every line-string.
-    RangeArray multi_line_strings; // a slice into coords for every MULTI line-string.
+    SliceArray line_strings;       // a slice into coords for every line-string.
+    SliceArray multi_line_strings; // a slice into coords for every MULTI line-string.
                                    // if this only has one entry for a line string it is
                                    // a single line string. otherwise a multi line string
     S64Array multi_line_style_indices;
 
-    RangeArray multi_points; // an index into coord for every (multi)-point.
+    SliceArray multi_points; // an index into coord for every (multi)-point.
     S64Array mutli_point_style_indices;
 };
 
@@ -353,7 +355,7 @@ static void PlotterReadParametersAndCreatePoint(MVT_ProtobufData data, U64 *ip,
 // Parse Polygon Coords. Specified at 4.3.4.4. Polygon Geometry Type.
 // A polygon MUST consist of an exterior ring and zero or more interior rings.
 static void MultiPolygonFromProtobufData(VT_TileGeometry *tile_geometry,
-                                         const MVT_ProtobufData data, const Range geometry,
+                                         const MVT_ProtobufData data, const Slice geometry,
                                          const S64 style_index, const F64 scale_factor) {
 
     MVT_Plotter plotter = {0};
@@ -384,9 +386,9 @@ static void MultiPolygonFromProtobufData(VT_TileGeometry *tile_geometry,
             switch (winding) {
             case COUNTER_CLOCKWISE: {
                 if (tile_geometry->rings.count > polygon_ring_start) {
-                    RangeArrayPush(
+                    SliceArrayPush(
                         &tile_geometry->polygons,
-                        (Range){.min = polygon_ring_start,
+                        (Slice){.min = polygon_ring_start,
                                 .count = tile_geometry->rings.count - polygon_ring_start});
                     polygon_ring_start = tile_geometry->rings.count;
                 }
@@ -394,26 +396,26 @@ static void MultiPolygonFromProtobufData(VT_TileGeometry *tile_geometry,
             case CLOCKWISE:
                 break;
             }
-            RangeArrayPush(&tile_geometry->rings,
-                           (Range){polygon_vertex_start,
+            SliceArrayPush(&tile_geometry->rings,
+                           (Slice){polygon_vertex_start,
                                    tile_geometry->mesh_coords.count - polygon_vertex_start});
             polygon_vertex_start = tile_geometry->mesh_coords.count;
         } break;
         }
     }
-    RangeArrayPush(&tile_geometry->polygons,
-                   (Range){.min = polygon_ring_start,
+    SliceArrayPush(&tile_geometry->polygons,
+                   (Slice){.min = polygon_ring_start,
                            .count = tile_geometry->rings.count - polygon_ring_start});
 
     // add an entry to the feature list with the range and the corresponding style
-    RangeArrayPush(
+    SliceArrayPush(
         &tile_geometry->polygon_features,
-        (Range){.min = feature_start, .count = tile_geometry->polygons.count - feature_start});
+        (Slice){.min = feature_start, .count = tile_geometry->polygons.count - feature_start});
     S64ArrayPush(&tile_geometry->multi_line_style_indices, style_index);
 }
 
 static void MultiLineStringFromProtobufData(VT_TileGeometry *tile_geometry,
-                                            const MVT_ProtobufData data, const Range geometry,
+                                            const MVT_ProtobufData data, const Slice geometry,
                                             const S64 style_index, const F64 scale_factor) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
@@ -429,9 +431,9 @@ static void MultiLineStringFromProtobufData(VT_TileGeometry *tile_geometry,
                 const S32 line_string_coordinate_count =
                     tile_geometry->texture_coords.count - line_string_start;
                 assert(line_string_coordinate_count > 0);
-                RangeArrayPush(
+                SliceArrayPush(
                     &tile_geometry->line_strings,
-                    (Range){.min = line_string_start, .count = line_string_coordinate_count});
+                    (Slice){.min = line_string_start, .count = line_string_coordinate_count});
                 line_string_start = tile_geometry->texture_coords.count;
             }
             assert(instruction.count == 1);
@@ -454,16 +456,16 @@ static void MultiLineStringFromProtobufData(VT_TileGeometry *tile_geometry,
     const S32 line_string_coordinate_count =
         tile_geometry->texture_coords.count - line_string_start;
     assert(line_string_coordinate_count > 0);
-    RangeArrayPush(&tile_geometry->line_strings,
-                   (Range){.min = line_string_start, .count = line_string_coordinate_count});
-    RangeArrayPush(&tile_geometry->multi_line_strings,
-                   (Range){.min = multi_line_string_start,
+    SliceArrayPush(&tile_geometry->line_strings,
+                   (Slice){.min = line_string_start, .count = line_string_coordinate_count});
+    SliceArrayPush(&tile_geometry->multi_line_strings,
+                   (Slice){.min = multi_line_string_start,
                            .count = tile_geometry->line_strings.count - multi_line_string_start});
     S64ArrayPush(&tile_geometry->multi_line_style_indices, style_index);
 }
 
 static void PointFromProtobufData(VT_TileGeometry *tile_geometry, const MVT_ProtobufData data,
-                                  const Range geometry, const S64 style_index, F64 scale_factor) {
+                                  const Slice geometry, const S64 style_index, F64 scale_factor) {
     assert(geometry.min >= 0);
     assert(geometry.count >= 1);
     MVT_Plotter plotter = {0};
@@ -486,9 +488,20 @@ static void PointFromProtobufData(VT_TileGeometry *tile_geometry, const MVT_Prot
         } break;
         }
     }
-    RangeArrayPush(&tile_geometry->multi_points,
-                   (Range){point_start, tile_geometry->texture_coords.count - point_start});
+    SliceArrayPush(&tile_geometry->multi_points,
+                   (Slice){point_start, tile_geometry->texture_coords.count - point_start});
     S64ArrayPush(&tile_geometry->mutli_point_style_indices, style_index);
+}
+
+// returns the index of the style. -1 if not found.
+static S64 ValueFromLayerKeyFilter(VT_StyleMap *map, String8 layer_name, String8 filter_key,
+                                   S64 filter_value, U32 zoom) {
+    VT_StyleMapKey key = (VT_StyleMapKey){0};
+    key.layer_hash = HashFromString8(0, layer_name);
+    key.filter_key_hash = HashFromString8(0, filter_key);
+    key.filter_value = filter_value;
+    key.zoom = zoom;
+    return hmgeti(map, key);
 }
 
 // parses Features and writes the coords into the provided layercoords for triangulation ->
@@ -502,7 +515,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
 
         GeometryType geometry_type = GEOMETRY_TYPE_UNKNOWN;
         S64 feature_style_index = -1;
-        Range geometry_range = {0};
+        Slice geometry_range = {0};
         U64 ip = 0;
 
         while (ip < feature.size) {
@@ -548,7 +561,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             case FEATURE_FIELD_GEOMETRY: {
                 assert(feature_field.wire_type == LEN);
                 const U32 geometry_size = U32FromVarInt128(feature, &ip);
-                geometry_range = (Range){.min = safe_cast_s32_from_u64(ip),
+                geometry_range = (Slice){.min = safe_cast_s32_from_u64(ip),
                                          .count = safe_cast_s32_from_u32(geometry_size)};
                 ip += geometry_size;
             } break;
@@ -585,7 +598,7 @@ static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleM
     BeginTextureMode(*texture);
     ClearBackground(BLANK);
     for (S32 i = 0; i < data->multi_points.count; i += 1) {
-        const Range multi_point = data->multi_points.v[i];
+        const Slice multi_point = data->multi_points.v[i];
         const VT_StyleMapValue point_style = styles[data->mutli_point_style_indices.v[i]].value;
         assert(point_style.type == SYMBOL || point_style.type == CIRCLE);
         for (S32 j = multi_point.min; j < multi_point.count; j += 1) {
@@ -597,19 +610,20 @@ static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleM
             case CIRCLE:
                 DrawCircleV(point, 15.f, point_style.paint.circle_color);
                 break;
-            default:
+            case FILL:
+            case LINE:
                 ERROR_MSG("unreachable");
             }
         }
     }
     for (S32 mls_index = 0; mls_index < data->multi_line_strings.count; mls_index += 1) {
-        const Range multi_line_string = data->multi_line_strings.v[mls_index];
+        const Slice multi_line_string = data->multi_line_strings.v[mls_index];
         const VT_StyleMapValue line_style =
             styles[data->multi_line_style_indices.v[mls_index]].value;
         assert(line_style.type == LINE);
         for (S32 ls_index = multi_line_string.min;
              ls_index < multi_line_string.min + multi_line_string.count; ls_index += 1) {
-            const Range line_string = data->line_strings.v[ls_index];
+            const Slice line_string = data->line_strings.v[ls_index];
             for (S32 k = line_string.min; k < line_string.min + line_string.count - 1; k += 1) {
                 const Vector2 a = Vector2FromCoord2(data->texture_coords.v[k]);
                 const Vector2 b = Vector2FromCoord2(data->texture_coords.v[k + 1]);
@@ -620,37 +634,9 @@ static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleM
     EndTextureMode();
 }
 
-static Mesh MeshFromTriangles(const TriangleArray *triangles, const Coord2Slice coords) {
-
-    // create a big mesh (triangle soup) to avoid unsigned short limit for
-    // indicdes in openGL
-    S32 vertex_soup_count = triangles->count * 3;
-    Mesh mesh = {
-        .vertexCount = vertex_soup_count,
-        .vertices = arena_alloc_array(arena, float, (size_t)vertex_soup_count * 3),
-        .triangleCount = triangles->count,
-    };
-    S32 v = 0;
-    for (S32 i = 0; i < triangles->count; i++) {
-        Triangle t = triangles->d[i];
-        mesh.vertices[v++] = (float)coords.v[t.a].x;
-        mesh.vertices[v++] = (float)coords.v[t.a].y + 512;
-        mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.c].x;
-        mesh.vertices[v++] = (float)coords.v[t.c].y + 512;
-        mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.b].x;
-        mesh.vertices[v++] = (float)coords.v[t.b].y + 512;
-        mesh.vertices[v++] = 0.f;
-    }
-
-    assert(mesh.vertexCount > 2);
-    assert(mesh.triangleCount > 0);
-    return mesh;
-}
-
 // creates a mesh from the relevant coords and polygon
-// stores the mesh triangle soup on the vector_data_arena.
+// stores the mesh triangle soup on the vector_data_arena and updates the reference in
+// dst_vector_data.
 static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
                                     const VT_TileGeometry *src_geometry,
                                     const VT_StyleMap *style_map) {
@@ -658,66 +644,107 @@ static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
 
     // account for some triangulation that might violate #triangulated triangles = #coords - 2.
     TriangleArray triangles = TriangleArrayNew(scratch.arena, src_geometry->mesh_coords.count * 2);
-    RangeArray triangle_colors = RangeArrayNew(scratch.arena, src_geometry->mesh_coords.count * 2);
-    S32Array contour_sizes = S32ArrayNew(scratch.arena, src_geometry->polygons.count);
+    // store the Range each feature occupies in the triangle array.
+    // This means each feature has the same index here as in src_geometry->polygon_style_indices
+    RangeArray triangulated_features =
+        RangeArrayNew(scratch.arena, src_geometry->mesh_coords.count * 2);
+    S32Array contour_sizes = S32ArrayNew(scratch.arena, src_geometry->rings.count);
 
-    for (S32 i = 0; i < data->multi_polygons.count; i += 1) {
-        const Range polygon_contours = data->multi_polygons.d[i];
-        const S32 start_index = data->polygons.d[polygon_contours.min].min;
-        const S32 triangle_index_first = triangles.count;
-        S32 polygon_vertex_count = 0;
-        for (S32 j = polygon_contours.min; j < polygon_contours.min + polygon_contours.count;
-             j += 1) {
-            const S32 contour_vertex_count = data->polygons.d[j].count;
-            S32ArrayPush(&contour_sizes, contour_vertex_count);
-            polygon_vertex_count += contour_vertex_count;
+    for (S32 feat = 0; feat < src_geometry->polygon_features.count; feat += 1) {
+        const S32 triangle_min = triangles.count;
+        const Range feature = RangeFromSlice(src_geometry->polygon_features.d[feat]);
+
+        for (S32 i = feature.min; i < feature.max; i += 1) {
+            const Slice polygon_contours = src_geometry->polygons.d[i];
+            const S32 start_index = src_geometry->rings.d[polygon_contours.min].min;
+            const S32 triangle_index_first = triangles.count;
+            S32 polygon_vertex_count = 0;
+            for (S32 j = polygon_contours.min; j < polygon_contours.min + polygon_contours.count;
+                 j += 1) {
+                const S32 contour_vertex_count = src_geometry->rings.d[j].count;
+                S32ArrayPush(&contour_sizes, contour_vertex_count);
+                polygon_vertex_count += contour_vertex_count;
+            }
+            Earcut(&triangles,
+                   Coord2SliceFromArrayExt(&src_geometry->mesh_coords, start_index,
+                                           polygon_vertex_count),
+                   S32SliceFromArray(&contour_sizes));
+            // we need to fix the indices as they are local to a polygon, but they
+            // now point into the global coordinate array.
+            for (S32 j = triangle_index_first; j < triangles.count; j += 1) {
+                Triangle *triangle = &triangles.d[j];
+                triangle->a += start_index;
+                triangle->b += start_index;
+                triangle->c += start_index;
+                assert(triangle->a >= start_index);
+                assert(triangle->a < src_geometry->mesh_coords.count);
+                assert(triangle->b >= start_index);
+                assert(triangle->b < src_geometry->mesh_coords.count);
+                assert(triangle->c >= start_index);
+                assert(triangle->c < src_geometry->mesh_coords.count);
+            }
+            S32ArrayReset(&contour_sizes);
         }
-        Earcut(&triangles,
-               Coord2SliceFromArrayExt(&data->mesh_coords, start_index, polygon_vertex_count),
-               S32SliceFromArray(&contour_sizes));
-        // we need to fix the indices as they are local to a polygon, but they
-        // now point into the global coordinate array.
-        for (S32 j = triangle_index_first; j < triangles.count; j += 1) {
-            Triangle *triangle = &triangles.d[j];
-            triangle->a += start_index;
-            triangle->b += start_index;
-            triangle->c += start_index;
-            assert(triangle->a >= start_index);
-            assert(triangle->a < data->mesh_coords.count);
-            assert(triangle->b >= start_index);
-            assert(triangle->b < data->mesh_coords.count);
-            assert(triangle->c >= start_index);
-            assert(triangle->c < data->mesh_coords.count);
-        }
-        S32ArrayReset(&contour_sizes);
+        RangeArrayPush(&triangulated_features,
+                       (Range){.min = triangle_min, .max = triangles.count});
     }
 
     // create a big mesh (triangle soup) to avoid unsigned short limit for
-    // indicdes in openGL
-    S32 vertex_soup_count = triangles.count * 3;
-    Mesh mesh = {
+    // indicdes in openGL.
+    // Furthermore we need to set the color for each vertex.
+    const S32 vertex_soup_count = triangles.count * 3;
+    const Mesh mesh = {
+        // x, y, z coords per vertex
+        .vertices = arena_alloc_array(&vector_data_arena, float, (size_t)vertex_soup_count * 3),
         .vertexCount = vertex_soup_count,
-        .vertices = arena_alloc_array(arena, float, (size_t)vertex_soup_count * 3),
-        .triangleCount = triangles->count,
-    };
+        .triangleCount = triangles.count,
+        // RGBA = 4 bytes per color
+        .colors =
+            arena_alloc_array(&vector_data_arena, unsigned char, (size_t)vertex_soup_count * 4)};
+    dst_vector_data->vertex_count = vertex_soup_count;
+    dst_vector_data->vertex_soup = mesh.vertices;
+    dst_vector_data->triangle_count = mesh.triangleCount;
+    dst_vector_data->triangle_colors = mesh.colors;
+
+    // vertex and color pointers
     S32 v = 0;
-    for (S32 i = 0; i < triangles->count; i++) {
-        Triangle t = triangles->d[i];
-        mesh.vertices[v++] = (float)coords.v[t.a].x;
-        mesh.vertices[v++] = (float)coords.v[t.a].y + 512;
-        mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.c].x;
-        mesh.vertices[v++] = (float)coords.v[t.c].y + 512;
-        mesh.vertices[v++] = 0.f;
-        mesh.vertices[v++] = (float)coords.v[t.b].x;
-        mesh.vertices[v++] = (float)coords.v[t.b].y + 512;
-        mesh.vertices[v++] = 0.f;
+    S32 c = 0;
+    for (S32 feat = 0; feat < triangulated_features.count; feat += 1) {
+        const Range feature = triangulated_features.d[feat];
+        const VT_StyleMapValue style = style_map[src_geometry->polygon_style_indices.d[feat]].value;
+        assert(style.type == FILL);
+        const Color triangle_color = style.paint.fill_color;
+
+        for (S32 triangle_idx = feature.min; triangle_idx < feature.max; triangle_idx += 1) {
+            const Triangle t = triangles.d[triangle_idx];
+            mesh.vertices[v++] = (float)src_geometry->mesh_coords.d[t.a].x;
+            mesh.vertices[v++] = (float)src_geometry->mesh_coords.d[t.a].y + 512;
+            mesh.vertices[v++] = 0.f;
+            mesh.vertices[v++] = (float)src_geometry->mesh_coords.d[t.c].x;
+            mesh.vertices[v++] = (float)src_geometry->mesh_coords.d[t.c].y + 512;
+            mesh.vertices[v++] = 0.f;
+            mesh.vertices[v++] = (float)src_geometry->mesh_coords.d[t.b].x;
+            mesh.vertices[v++] = (float)src_geometry->mesh_coords.d[t.b].y + 512;
+            mesh.vertices[v++] = 0.f;
+
+            // set color for each of the 3 vertices
+            for (S32 i = 0; i < 3; i += 1) {
+                mesh.colors[c++] = triangle_color.r;
+                mesh.colors[c++] = triangle_color.g;
+                mesh.colors[c++] = triangle_color.b;
+                mesh.colors[c++] = triangle_color.a;
+            }
+        }
     }
 
     assert(mesh.vertexCount > 2);
     assert(mesh.triangleCount > 0);
-    return mesh;
+    // check that we have colored all vertices
+    assert(c % 4 == 0);
+    assert(v % 4 == 0);
+    assert(c / 4 == v / 3);
     temp_arena_memory_end(scratch);
+    return mesh;
 }
 
 // creates a new tile with very conservative size estimates
@@ -726,16 +753,16 @@ static VT_TileGeometry *CreateNewTile(Arena *arena, S32 tile_size) {
     tile->mesh_coords = Coord2ArrayNew(arena, tile_size);
     tile->texture_coords = Coord2ArrayNew(arena, tile_size);
 
-    tile->rings = RangeArrayNew(arena, tile_size);
-    tile->polygons = RangeArrayNew(arena, tile_size);
-    tile->polygon_features = RangeArrayNew(arena, tile_size);
+    tile->rings = SliceArrayNew(arena, tile_size);
+    tile->polygons = SliceArrayNew(arena, tile_size);
+    tile->polygon_features = SliceArrayNew(arena, tile_size);
     tile->polygon_style_indices = S64ArrayNew(arena, tile_size);
 
-    tile->line_strings = RangeArrayNew(arena, tile_size);
-    tile->multi_line_strings = RangeArrayNew(arena, tile_size);
+    tile->line_strings = SliceArrayNew(arena, tile_size);
+    tile->multi_line_strings = SliceArrayNew(arena, tile_size);
     tile->multi_line_style_indices = S64ArrayNew(arena, tile_size);
 
-    tile->multi_points = RangeArrayNew(arena, tile_size);
+    tile->multi_points = SliceArrayNew(arena, tile_size);
     tile->mutli_point_style_indices = S64ArrayNew(arena, tile_size);
     return tile;
 }
@@ -746,8 +773,29 @@ static VT_TileGeometry *CreateNewTile(Arena *arena, S32 tile_size) {
 // - int(layer count in MVT) Meshes
 static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
                                                 MVT_ProtobufData data, VT_StyleMap *style_map) {
+
+    // check if we already have parsed this tile
+    const S64 tile_data_index = hmgeti(vector_data_map, tile_coordinate);
+    if (tile_data_index != -1) {
+        const VT_VectorData vector_data = vector_data_map[tile_data_index].value;
+
+        // render to texture
+        const RenderTexture2D texture = LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
+        TileTextureFromVectorData(&vector_data, style_map, &texture);
+
+        const Mesh tile_mesh = (Mesh){
+            // x, y, z coords per vertex
+            .vertices = vector_data.vertex_soup,
+            .vertexCount = vector_data.vertex_count,
+            .triangleCount = vector_data.triangle_count,
+            // RGBA = 4 bytes per color
+            .colors = vector_data.triangle_colors,
+        };
+        return (VectorTileGPU_Data){tile_mesh, texture};
+    }
+
     Temp_Arena_Memory scratch = GetScratch();
-    S32 layer_count = LayerCount(data);
+    const S32 layer_count = LayerCount(data);
     VT_TileGeometry *tile_geometry =
         CreateNewTile(scratch.arena, safe_cast_s32_from_u64(data.size));
     DEBUG_MSG("layer count: %d\n", layer_count);
@@ -789,13 +837,12 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
             } break;
             case LAYER_FIELD_KEYS: {
                 assert(layer_field.wire_type == LEN);
-                // TODO: store the keys in a []String8 and the values in a
-                // []discriminated union. Although splitting the values depending on type
-                // would be easier for the CPU, indexing becomes really cumbersome.
-                //
-                // TODO: These arrays are stored once per layer and passed to the feature
-                // parser to use. This also means parsing features has to be deferred
-                // after all key-values are decoded. (E.g. not in this loop).
+                // store the keys in a []String8 and the values in a []discriminated union. Although
+                // splitting the values depending on type would be easier for the CPU, indexing
+                // becomes really cumbersome.
+                // These arrays are stored once per layer and passed to the feature parser to use.
+                // This also means parsing features has to be deferred after all key-values are
+                // decoded. (E.g. not in this loop).
                 const String8 key_name = String8FromProtobufData(data, &ip);
                 String8ArrayPush(&layer_keys, key_name);
                 assert(saved_ip < ip); // ensure we are making progress
@@ -841,7 +888,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
         }
     }
 
-    // stores the data on the vector_data_arena for persistant storage.
+// stores the data on the vector_data_arena for persistant storage.
 #define VectorDataFieldFromGeometry(Type, dst_slice, src_array)                                    \
     dst_slice =                                                                                    \
         (Type##Slice){.v = arena_alloc_array(&vector_data_arena, Type, (size_t)(src_array).count), \
@@ -854,13 +901,13 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
     // reuse.
     VT_VectorData vector_data = {0};
     VectorDataFieldFromGeometry(Coord2, vector_data.texture_coords, tile_geometry->texture_coords);
-    VectorDataFieldFromGeometry(Range, vector_data.line_strings, tile_geometry->line_strings);
-    VectorDataFieldFromGeometry(Range, vector_data.multi_line_strings,
+    VectorDataFieldFromGeometry(Slice, vector_data.line_strings, tile_geometry->line_strings);
+    VectorDataFieldFromGeometry(Slice, vector_data.multi_line_strings,
                                 tile_geometry->multi_line_strings);
     VectorDataFieldFromGeometry(S64, vector_data.multi_line_style_indices,
                                 tile_geometry->multi_line_style_indices);
 
-    VectorDataFieldFromGeometry(Range, vector_data.multi_points, tile_geometry->multi_points);
+    VectorDataFieldFromGeometry(Slice, vector_data.multi_points, tile_geometry->multi_points);
     VectorDataFieldFromGeometry(S64, vector_data.mutli_point_style_indices,
                                 tile_geometry->mutli_point_style_indices);
 
@@ -869,11 +916,11 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
     TileTextureFromVectorData(&vector_data, style_map, &texture);
 
     // generate mesh
-    Mesh tile_mesh = MeshFromPolygonGeometry(&vector_data, tile_geometry, style_map);
+    const Mesh tile_mesh = MeshFromPolygonGeometry(&vector_data, tile_geometry, style_map);
 
     // cache vector data for quick redraw
-    hmput(tile_coordinate, vector_data);
+    hmput(vector_data_map, tile_coordinate, vector_data);
 
     temp_arena_memory_end(scratch);
-    return (VectorTileGPU_Data){layer_mesh, texture};
+    return (VectorTileGPU_Data){tile_mesh, texture};
 }

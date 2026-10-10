@@ -2,6 +2,7 @@
 #include "../base.h"
 #include "../vendor/raymath.h"
 #include "mvt.h"
+#include "types.h"
 #include "vtpk_reader.h"
 #include <assert.h>
 #include <math.h>
@@ -37,7 +38,7 @@ static void PrintMissingTiles(S32Slice s, QuadTreeNodeArray quad_tree) {
         if (i > 0) {
             fprintf(stderr, ", ");
         }
-        VectorTileCoordinate coords = quad_tree.d[s.v[i]].tile.coordinate;
+        const VT_Coordinate coords = quad_tree.d[s.v[i]].tile.coordinate;
         fprintf(stderr, "(r: %d, c: %d, l: %d)", coords.row, coords.col, coords.level);
     }
     fprintf(stderr, "]\n");
@@ -283,7 +284,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
     Material material = LoadMaterialDefault();
     material.maps[MATERIAL_MAP_DIFFUSE].color = BLUE;
 
-    //Shader shader_blur = LoadShader(0, "shaders/blur.fs");
+    // Shader shader_blur = LoadShader(0, "shaders/blur.fs");
 
     SetTargetFPS(30); // NOTE: for now
     Color colors[13] = {RED,  GOLD,   LIME,  BLUE,    VIOLET, BROWN, LIGHTGRAY,
@@ -332,32 +333,32 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     rlPushMatrix();
                     rlLoadIdentity();
                     rlMultMatrixf(MatrixToFloat(mesh_transform));
-                    for (S32 j = 0; j < tile.gpu_data.meshes.count; j += 1) {
-                        material.maps[MATERIAL_MAP_DIFFUSE].color = colors[current_color];
-                        current_color = (current_color + 1) % 13;
-                        mesh_pos.x = mesh_transform.m12;
-                        mesh_pos.y = mesh_transform.m13;
-                        mesh_pos.z = mesh_transform.m14;
-                        DrawMesh(tile.gpu_data.meshes.v[j], material,
-                                 MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
-                        if (render_options.show_bounding_box) {
-                            BoundingBox bbox = GetMeshBoundingBox(tile.gpu_data.meshes.v[j]);
-                            DrawRectangleLines((S32)bbox.min.x, (S32)bbox.min.y,
-                                               (S32)(bbox.max.x - bbox.min.x),
-                                               (S32)(bbox.max.y - bbox.min.y), GREEN);
-                            DrawTextEx(GetFontDefault(),
-                                       TextFormat("[ROW: %d COL: %d LVL: %d]", tile.coordinate.row,
-                                                  tile.coordinate.col, tile.coordinate.level),
-                                       (Vector2){bbox.min.x + 10, bbox.min.y + 10}, 10, 1, RED);
-                            Vector2 screen_pos_min = GetWorldToScreen2D(
-                                (Vector2){bbox.min.x, bbox.min.y}, Camera2DFromTileCamera(camera));
-                            TraceLog(LOG_INFO, "bbox min screen coords: [%f, %f]", screen_pos_min.x,
-                                     screen_pos_min.y);
-                            Vector2 screen_pos_max = GetWorldToScreen2D(
-                                (Vector2){bbox.max.x, bbox.max.y}, Camera2DFromTileCamera(camera));
-                            TraceLog(LOG_INFO, "bbox max screen coords: [%f, %f]", screen_pos_max.x,
-                                     screen_pos_max.y);
-                        }
+
+                    material.maps[MATERIAL_MAP_DIFFUSE].color = colors[current_color];
+                    current_color = (current_color + 1) % 13;
+                    mesh_pos.x = mesh_transform.m12;
+                    mesh_pos.y = mesh_transform.m13;
+                    mesh_pos.z = mesh_transform.m14;
+
+                    DrawMesh(tile.gpu_data.mesh, material,
+                             MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
+                    if (render_options.show_bounding_box) {
+                        BoundingBox bbox = GetMeshBoundingBox(tile.gpu_data.mesh);
+                        DrawRectangleLines((S32)bbox.min.x, (S32)bbox.min.y,
+                                           (S32)(bbox.max.x - bbox.min.x),
+                                           (S32)(bbox.max.y - bbox.min.y), GREEN);
+                        DrawTextEx(GetFontDefault(),
+                                   TextFormat("[ROW: %d COL: %d LVL: %d]", tile.coordinate.row,
+                                              tile.coordinate.col, tile.coordinate.level),
+                                   (Vector2){bbox.min.x + 10, bbox.min.y + 10}, 10, 1, RED);
+                        Vector2 screen_pos_min = GetWorldToScreen2D(
+                            (Vector2){bbox.min.x, bbox.min.y}, Camera2DFromTileCamera(camera));
+                        TraceLog(LOG_INFO, "bbox min screen coords: [%f, %f]", screen_pos_min.x,
+                                 screen_pos_min.y);
+                        Vector2 screen_pos_max = GetWorldToScreen2D(
+                            (Vector2){bbox.max.x, bbox.max.y}, Camera2DFromTileCamera(camera));
+                        TraceLog(LOG_INFO, "bbox max screen coords: [%f, %f]", screen_pos_max.x,
+                                 screen_pos_max.y);
                     }
                     rlPopMatrix();
                 }

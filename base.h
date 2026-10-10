@@ -298,27 +298,27 @@ struct Triangle {
     S32 a, b, c;
 };
 
-// a slice has a base and a count. Is a view into an array.
-//typedef struct Slice Slice;
-//struct Slice {
-//    S32 start;
-//    S32 count;
-//};
-
 // a range has a min and a max (exclusive). Is a view into an array.
 typedef struct Range Range;
 struct Range {
     S32 min;
+    S32 max;
+};
+
+// a slice has a base and a count. Is a view into an array.
+typedef struct Slice Slice;
+struct Slice {
+    S32 min;
     S32 count;
 };
 
-//INTERNAL_FORCEINLINE static Slice SliceFromRange(Range r) {
-//    return (Slice){.start = r.min, .count = r.max - r.min};
-//}
-//
-//INTERNAL_FORCEINLINE static Range RangeFromSlice(Slice s) {
-//    return (Range){.min = s.start, .max = s.start + s.count};
-//}
+INTERNAL_FORCEINLINE static Slice SliceFromRange(Range r) {
+    return (Slice){.min = r.min, .count = r.max - r.min};
+}
+
+INTERNAL_FORCEINLINE static Range RangeFromSlice(Slice s) {
+    return (Range){.min = s.min, .max = s.min + s.count};
+}
 
 DeclFixedArray(Coord2Array, Coord2);
 DeclFixedArray(Vector2Array, Vector2);
@@ -329,8 +329,8 @@ DeclFixedArray(U8Array, U8);
 DeclFixedArray(S32Array, S32);
 DeclFixedArray(S64Array, S64);
 DeclFixedArray(F64Array, F64);
+DeclFixedArray(SliceArray, Slice);
 DeclFixedArray(RangeArray, Range);
-//DeclFixedArray(SliceArray, Slice);
 typedef struct Screen Screen;
 struct Screen {
     S32 width, height;

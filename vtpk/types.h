@@ -146,11 +146,11 @@ struct VT_VectorData {
     // texture data
     Coord2Slice texture_coords;    // holds the coordinates for every feature that
                                    // gets transformed into a GPU texture.
-    RangeSlice line_strings;       // a slice into coords for every line-string.
-    RangeSlice multi_line_strings; // a slice into coords for every MULTI line-string. This is
+    SliceSlice line_strings;       // a slice into coords for every line-string.
+    SliceSlice multi_line_strings; // a slice into coords for every MULTI line-string. This is
                                    // equivalent to the number of LINESTRINGs in the Protobuf Data.
     S64Slice multi_line_style_indices;
 
-    RangeSlice multi_points; // an index into coord for every (multi)-point.
+    SliceSlice multi_points; // an index into coord for every (multi)-point.
     S64Slice mutli_point_style_indices;
 };

@@ -11,7 +11,7 @@
 typedef struct EarcutPolygon EarcutPolygon;
 struct EarcutPolygon {
     Coord2Slice coords;
-    RangeSlice contours;
+    SliceSlice contours;
 };
 
 typedef struct ZOrderInfo ZOrderInfo;
@@ -93,7 +93,7 @@ static inline bool containsPointExceptFirst(BoundedTriangle t, F64 px, F64 py) {
     return !(t.ax == px && t.ay == py) && containsPoint(t, px, py);
 }
 
-static S32 LinkedList(NodeArray *nodes, Coord2Slice coords, Range contour,
+static S32 LinkedList(NodeArray *nodes, Coord2Slice coords, Slice contour,
                       bool clockwise);
 static bool IsEar(NodeSlice nodes, S32 ear);
 static bool IsEarHashed(NodeSlice nodes, ZOrderInfo bounds, S32 ear);
@@ -170,7 +170,7 @@ static bool isContourClockwise(const Coord2Slice coords) {
 
 // create a circular doubly linked list from polygon points in the specified
 // winding order
-static S32 LinkedList(NodeArray *nodes, const Coord2Slice coords, const Range contour,
+static S32 LinkedList(NodeArray *nodes, const Coord2Slice coords, const Slice contour,
                       const bool clockwise) {
 #ifdef DEBUG
 #ifdef DEBUG_EARCUT
@@ -1301,16 +1301,16 @@ static void Earcut(TriangleArray *triangles, const Coord2Slice coords,
     NodeArray nodes = NodeArrayNew(scratch.arena, 2 * coords.count);
     NodeArrayPush(&nodes, (Node){0});
 
-    RangeArray contours = RangeArrayNew(scratch.arena, contour_sizes.count);
+    SliceArray contours = SliceArrayNew(scratch.arena, contour_sizes.count);
     S32 coords_so_far = 0;
     for (S32 i = 0; i < contour_sizes.count; i += 1) {
-        RangeArrayPush(&contours,
-                       (Range){.min = coords_so_far, .count = contour_sizes.v[i]});
+        SliceArrayPush(&contours,
+                       (Slice){.min = coords_so_far, .count = contour_sizes.v[i]});
         coords_so_far += contour_sizes.v[i];
     }
 
     const EarcutPolygon polygon = {.coords = coords,
-                             .contours = RangeSliceFromArray(&contours)};
+                             .contours = SliceSliceFromArray(&contours)};
 
     S32 outerNode = LinkedList(&nodes, coords, polygon.contours.v[0], true);
     if (!outerNode || nodes.d[outerNode].prev == nodes.d[outerNode].next)

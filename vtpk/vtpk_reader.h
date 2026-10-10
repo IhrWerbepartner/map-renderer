@@ -320,17 +320,6 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
     }
 }
 
-// returns the index of the style. -1 if not found.
-static S64 ValueFromLayerKeyFilter(VT_StyleMap *map, String8 layer_name, String8 filter_key,
-                                   S64 filter_value, U32 zoom) {
-    VT_StyleMapKey key = (VT_StyleMapKey){0};
-    key.layer_hash = HashFromString8(0, layer_name);
-    key.filter_key_hash = HashFromString8(0, filter_key);
-    key.filter_value = filter_value;
-    key.zoom = zoom;
-    return hmgeti(map, key);
-}
-
 // Parse the whole VTPK Zip Bundle and set up internal datastructures
 static VtpkFile *VtpkParseFile(Arena *arena, const char *filepath) {
     VtpkFile *vtpk_file = arena_alloc(arena, sizeof(VtpkFile));
@@ -453,9 +442,9 @@ static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indice
         // read 4 bytes (maybe unaligned)
         U32 uncompressed_tile_size;
         memcpy(&uncompressed_tile_size, uncompressed_tile_size_location, sizeof(U32));
-        const MVT_ProtobufData mvt_protobuf = {
-            .v = arena_alloc(scratch.arena, uncompressed_tile_size),
-            .size = uncompressed_tile_size};
+        const MVT_ProtobufData mvt_protobuf =
+            (MVT_ProtobufData){.v = arena_alloc(scratch.arena, uncompressed_tile_size),
+                               .size = uncompressed_tile_size};
 
         mz_stream stream = {0};
         stream.next_in = file_content + compressed_mvt.tile_offset;

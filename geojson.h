@@ -296,23 +296,23 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
 
         if (String8Equals(geometry_type->text_value, String8FromCString("MultiPoint"))) {
             MultiPoint multi_point = (MultiPoint){
-                .coordinates = (Slice){.start = render_data->multi_points.count,
-                                       .length = coordinates->children.count},
+                .coordinates = (Slice){.min = render_data->multi_points.count,
+                                       .count = coordinates->children.count},
             };
             Coord2ArrayFromJsonArray(coordinates, &render_data->multi_point_coords);
             // assert that we inserted the correct amount of points
-            assert(multi_point.coordinates.start + multi_point.coordinates.length ==
+            assert(multi_point.coordinates.min + multi_point.coordinates.count ==
                    render_data->multi_point_coords.count);
             MultiPointArrayPush(&render_data->multi_points, multi_point);
         }
 
         if (String8Equals(geometry_type->text_value, String8FromCString("LineString"))) {
             LineString line_string = (LineString){
-                .coordinates = (Slice){.start = render_data->line_string_coords.count,
-                                       .length = coordinates->children.count},
+                .coordinates = (Slice){.min = render_data->line_string_coords.count,
+                                       .count = coordinates->children.count},
             };
             Coord2ArrayFromJsonArray(coordinates, &render_data->line_string_coords);
-            ASSERT(line_string.coordinates.start + line_string.coordinates.length ==
+            ASSERT(line_string.coordinates.min + line_string.coordinates.count ==
                        render_data->line_string_coords.count,
                    "assert failed at line: %d", __LINE__)
             LineStringArrayPush(&render_data->line_strings, line_string);
@@ -322,18 +322,18 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                           String8FromCString("MultiLineString"))) {
             JsonNode *line_string = coordinates->children.first;
             MultiLineString mls = (MultiLineString){
-                .lines = (Slice){.start = render_data->multi_line_string_array.count,
-                                 .length = coordinates->children.count},
+                .lines = (Slice){.min = render_data->multi_line_string_array.count,
+                                 .count = coordinates->children.count},
             };
             while (line_string != &json_node_null) {
                 LineString ls = (LineString){
                     .coordinates =
-                        (Slice){.start = render_data->multi_line_string_coords.count,
-                                .length = line_string->children.count},
+                        (Slice){.min = render_data->multi_line_string_coords.count,
+                                .count = line_string->children.count},
                 };
                 Coord2ArrayFromJsonArray(line_string,
                                          &render_data->multi_line_string_coords);
-                ASSERT(ls.coordinates.start + ls.coordinates.length ==
+                ASSERT(ls.coordinates.min + ls.coordinates.count ==
                            render_data->multi_line_string_coords.count,
                        "assert failed at line: %d", __LINE__)
                 LineStringArrayPush(&render_data->multi_line_string_array, ls);
@@ -576,8 +576,8 @@ static void draw_multi_points(const GeoJson *coords, Camera2D camera) {
     MultiPointArray points = coords->multi_points;
     Coord2Array m_coords = coords->multi_point_coords;
     for (S32 i = 0; i < points.count; i++) {
-        const S32 start_index = points.d[i].coordinates.start;
-        const S32 length = points.d[i].coordinates.length;
+        const S32 start_index = points.d[i].coordinates.min;
+        const S32 length = points.d[i].coordinates.count;
         for (S32 j = 0; j < length; j++) {
             Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(m_coords.d[start_index + j]),
                                            camera);
@@ -592,8 +592,8 @@ static void draw_line_strings(const GeoJson *coords, Camera2D camera,
     LineStringArray lines = coords->line_strings;
     Coord2Array l_coords = coords->line_string_coords;
     for (S32 i = 0; i < lines.count; i++) {
-        const S32 start_index = lines.d[i].coordinates.start;
-        const S32 length = lines.d[i].coordinates.length;
+        const S32 start_index = lines.d[i].coordinates.min;
+        const S32 length = lines.d[i].coordinates.count;
         for (S32 j = 0; j < length - 1; j++) {
             Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(l_coords.d[start_index + j]),
                                            camera);
