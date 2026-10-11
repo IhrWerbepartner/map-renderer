@@ -20,7 +20,7 @@ windows: $(SOURCE_FILES)
 	zig cc -o render_debug.exe map_renderer.c -I $(WINDOWS_INCLUDES) $(WINDOWS_LDFLAGS) $(WINDOWS_DEFINES) -g -DDEBUG
 
 windows-optimized: $(SOURCE_FILES)
-	zig cc -o render_release.exe map_renderer.c -I $(WINDOWS_INCLUDES) $(WINDOWS_LDFLAGS) $(WINDOWS_DEFINES) -g -O2
+	zig cc -o render_release.exe map_renderer.c -I $(WINDOWS_INCLUDES) $(WINDOWS_LDFLAGS) $(WINDOWS_DEFINES) -g -O3 -march=native
 
 release: $(SOURCE_FILES)
 	gcc $(CFLAGS) $(LDFLAGS) -g map_renderer.c -o $(EXE_NAME) -O2
