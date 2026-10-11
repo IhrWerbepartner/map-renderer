@@ -309,7 +309,7 @@ static ProtobufValue ProtobufParseValue(MVT_ProtobufData data, U64 *ip) {
     } break;
     case VALUE_SINT: {
         const U64 zigzag_value = U64FromVarInt128(data, ip);
-        val.value.sint64 = (S64)(zigzag_value >> 1) ^ (-(zigzag_value & 1));
+        val.value.sint64 = (S64)((zigzag_value >> 1) ^ (-(zigzag_value & 1)));
     } break;
     case VALUE_BOOL: {
         val.value._bool = U64FromVarInt128(data, ip);
@@ -523,7 +523,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
         // assume there may be no filter key-value pairs, therefore set the initial value to
         // a lookup of layer_name and zoom.
         VT_StyleMapKey key = (VT_StyleMapKey){.layer_hash = HashFromString8(0, layer_name),
-                                              .zoom = tile_coordinate.level};
+                                              .zoom = (U32)tile_coordinate.level};
         S64 feature_style_index = hmgeti(style_map, key);
 
         Slice geometry_range = {0};
@@ -551,8 +551,8 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
                 while (ip < tags_end) {
                     const U32 tag_key_index = U32FromVarInt128(feature, &ip);
                     const U32 tag_value_index = U32FromVarInt128(feature, &ip);
-                    assert(tag_key_index < keys.count);
-                    assert(tag_value_index < values.count);
+                    assert(tag_key_index < (U32)keys.count);
+                    assert(tag_value_index < (U32)values.count);
                     const String8 tag_key = keys.v[tag_key_index];
                     const ProtobufValue tag_value = values.v[tag_value_index];
                     if (tag_value.type == VALUE_SINT) {

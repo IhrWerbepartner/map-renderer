@@ -323,11 +323,11 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
                 filter_key = filter->children.first->next->text_value;
             }
             if (hmgeti(vtpk_file->layer_styles, key) != -1) {
-                DEBUG_MSG("[WARNING] Layer: %.*s, key: %.*s, value: %lld, zoom: %d already exists\n",
+                DEBUG_MSG("[WARNING] Layer: %.*s, key: %.*s, value: %ld, zoom: %d already exists\n",
                           (int)source_layer->text_value.len, source_layer->text_value.buf,
                           (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
             } else {
-                DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %lld, zoom: %d\n",
+                DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %ld, zoom: %d\n",
                           (int)source_layer->text_value.len, source_layer->text_value.buf,
                           (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
             }

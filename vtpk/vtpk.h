@@ -146,7 +146,7 @@ static void EndModeTile(void) { EndMode2D(); }
 
 static TileCamera ResetTileCamera(Screen screen) {
     return (TileCamera){
-        .zoom = 0.5f, // speicfies the zoom level. Is in the range (0; +infinity).
+        .zoom = 1.0f, // speicfies the zoom level. Is in the range (0; +infinity).
                       // the non integer part is used to interpolate between the tile sizes
                       // meaning it zooms the camera until the next tile size is hit.
         .rotation = 0.0f,
