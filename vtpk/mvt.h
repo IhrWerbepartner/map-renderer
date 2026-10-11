@@ -16,10 +16,10 @@
 #define MVT_MESH_SIZE (512 * 8)
 #define LAYER_KEYS_MAX (1000)
 #define LAYER_VALUES_MAX (1000)
-#define LAYER_FEATURES_MAX (10000)
+#define LAYER_FEATURES_MAX (100000)
 
 // ------------------------  STATIC DATA  ---------------------
-static unsigned char vector_data_buf[MB(500)] = {0};
+static unsigned char vector_data_buf[GB(1)] = {0};
 static Arena vector_data_arena = (Arena){vector_data_buf, sizeof(vector_data_buf), 0, 0};
 
 typedef struct VT_VectorDataMap VT_VectorDataMap;
@@ -168,23 +168,21 @@ static U64 DecodeVarInt128(const MVT_ProtobufData data, U32 allowed_bytes_read, 
 }
 
 static S64 DecodeVarInt128Signed(const MVT_ProtobufData data, U32 allowed_bytes_read, U64 *ip) {
-    S64 result = 0;
+    U64 val = 0;
     S32 shift = 0;
     U32 i = 0;
-    while (i < allowed_bytes_read) {
-        U8 b = data.v[i];
-        result |= (b & bitmask7) << shift;
-        shift += 7;
-        if ((bit8 & b) == 0) {
-            if (shift < 32 && (b & bit7) != 0) {
-                result |= ~0 << shift;
-            }
-            *ip += i + 1;
-            return result;
-        }
+    U64 c;
+    do {
+        c = data.v[*ip + i];
+        val |= (c & 0x7f) << shift;
         i += 1;
+        shift += 7;
+    } while (c & 0x80 && i < allowed_bytes_read);
+    if (shift < 64 && c & 0x40) {
+        val |= ~0ULL << shift;
     }
-    ERROR_MSG("invalid SignedVarInt128 detected");
+    *ip += i;
+    return (S64)val;
 }
 
 INTERNAL_FORCEINLINE static S64 S64FromVarInt128(MVT_ProtobufData data, U64 *ip) {
@@ -310,7 +308,8 @@ static ProtobufValue ProtobufParseValue(MVT_ProtobufData data, U64 *ip) {
         val.value.uint64 = U64FromVarInt128(data, ip);
     } break;
     case VALUE_SINT: {
-        val.value.sint64 = S64FromVarInt128(data, ip);
+        const U64 zigzag_value = U64FromVarInt128(data, ip);
+        val.value.sint64 = (S64)(zigzag_value >> 1) ^ (-(zigzag_value & 1));
     } break;
     case VALUE_BOOL: {
         val.value._bool = U64FromVarInt128(data, ip);
@@ -414,7 +413,7 @@ static void MultiPolygonFromProtobufData(VT_TileGeometry *tile_geometry,
     SliceArrayPush(
         &tile_geometry->polygon_features,
         (Slice){.min = feature_start, .count = tile_geometry->polygons.count - feature_start});
-    S64ArrayPush(&tile_geometry->multi_line_style_indices, style_index);
+    S64ArrayPush(&tile_geometry->polygon_style_indices, style_index);
 }
 
 static void MultiLineStringFromProtobufData(VT_TileGeometry *tile_geometry,
@@ -465,6 +464,8 @@ static void MultiLineStringFromProtobufData(VT_TileGeometry *tile_geometry,
                    (Slice){.min = multi_line_string_start,
                            .count = tile_geometry->line_strings.count - multi_line_string_start});
     S64ArrayPush(&tile_geometry->multi_line_style_indices, style_index);
+    assert(tile_geometry->multi_line_strings.count ==
+           tile_geometry->multi_line_style_indices.count);
 }
 
 static void PointFromProtobufData(VT_TileGeometry *tile_geometry, const MVT_ProtobufData data,
@@ -494,6 +495,7 @@ static void PointFromProtobufData(VT_TileGeometry *tile_geometry, const MVT_Prot
     SliceArrayPush(&tile_geometry->multi_points,
                    (Slice){point_start, tile_geometry->texture_coords.count - point_start});
     S64ArrayPush(&tile_geometry->mutli_point_style_indices, style_index);
+    assert(tile_geometry->multi_points.count == tile_geometry->mutli_point_style_indices.count);
 }
 
 // returns the index of the style. -1 if not found.
@@ -517,10 +519,15 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
         MVT_ProtobufData feature = features.v[i];
 
         GeometryType geometry_type = GEOMETRY_TYPE_UNKNOWN;
-        S64 feature_style_index = -1;
+
+        // assume there may be no filter key-value pairs, therefore set the initial value to
+        // a lookup of layer_name and zoom.
+        VT_StyleMapKey key = (VT_StyleMapKey){.layer_hash = HashFromString8(0, layer_name),
+                                              .zoom = tile_coordinate.level};
+        S64 feature_style_index = hmgeti(style_map, key);
+
         Slice geometry_range = {0};
         U64 ip = 0;
-
         while (ip < feature.size) {
             const U64 saved_ip = ip;
             const ProtobufTag feature_field = TagFromProtobufData(feature, &ip);
@@ -544,6 +551,8 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
                 while (ip < tags_end) {
                     const U32 tag_key_index = U32FromVarInt128(feature, &ip);
                     const U32 tag_value_index = U32FromVarInt128(feature, &ip);
+                    assert(tag_key_index < keys.count);
+                    assert(tag_value_index < values.count);
                     const String8 tag_key = keys.v[tag_key_index];
                     const ProtobufValue tag_value = values.v[tag_value_index];
                     if (tag_value.type == VALUE_SINT) {
@@ -555,7 +564,6 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
                         }
                     }
                 }
-                ip += tags_size;
             } break;
             case FEATURE_FIELD_TYPE: {
                 assert(feature_field.wire_type == VARINT);
@@ -573,19 +581,38 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             }
             assert(saved_ip < ip); // ensure we are making progress
         }
+        // for now ensure we have found each style
+        if (feature_style_index == -1) {
+            DEBUG_MSG("[WARINIG] no style for feature in (r: %d, c: %d, l: %d) - %.*s\n",
+                      tile_coordinate.row, tile_coordinate.col, tile_coordinate.level,
+                      (int)layer_name.len, layer_name.buf)
+            continue;
+        }
+        assert(feature_style_index != -1);
+
         switch (geometry_type) {
         case GEOMETRY_TYPE_UNKNOWN: {
             ERROR_MSG("UNKNOWN geometry not supported")
         } break;
         case GEOMETRY_TYPE_POINT: {
+            assert(style_map[feature_style_index].value.type == CIRCLE ||
+                   style_map[feature_style_index].value.type == SYMBOL);
             PointFromProtobufData(tile_geometry, feature, geometry_range, feature_style_index,
                                   scale_factor);
         } break;
         case GEOMETRY_TYPE_LINESTRING: {
+            // note symbols can also be used on lines, see:
+            // https://docs.mapbox.com/style-spec/reference/layers/#layout-symbol-symbol-placement
+            assert(style_map[feature_style_index].value.type == LINE ||
+                   style_map[feature_style_index].value.type == SYMBOL);
             MultiLineStringFromProtobufData(tile_geometry, feature, geometry_range,
                                             feature_style_index, scale_factor);
         } break;
         case GEOMETRY_TYPE_POLYGON: {
+            // note symbols can also be used on polygons, see:
+            // https://docs.mapbox.com/style-spec/reference/layers/#layout-symbol-symbol-placement
+            assert(style_map[feature_style_index].value.type == FILL ||
+                   style_map[feature_style_index].value.type == SYMBOL);
             MultiPolygonFromProtobufData(tile_geometry, feature, geometry_range,
                                          feature_style_index, scale_factor);
         } break;
@@ -621,17 +648,28 @@ static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleM
     }
     for (S32 mls_index = 0; mls_index < data->multi_line_strings.count; mls_index += 1) {
         const Slice multi_line_string = data->multi_line_strings.v[mls_index];
-        const VT_StyleMapValue line_style =
-            styles[data->multi_line_style_indices.v[mls_index]].value;
-        assert(line_style.type == LINE);
-        for (S32 ls_index = multi_line_string.min;
-             ls_index < multi_line_string.min + multi_line_string.count; ls_index += 1) {
-            const Slice line_string = data->line_strings.v[ls_index];
-            for (S32 k = line_string.min; k < line_string.min + line_string.count - 1; k += 1) {
-                const Vector2 a = Vector2FromCoord2(data->texture_coords.v[k]);
-                const Vector2 b = Vector2FromCoord2(data->texture_coords.v[k + 1]);
-                DrawLineEx(a, b, 5.f, line_style.paint.line_color);
+        const S64 line_style_index = data->multi_line_style_indices.v[mls_index];
+        assert(line_style_index != -1);
+        const VT_StyleMapValue line_style = styles[line_style_index].value;
+        switch (line_style.type) {
+        case LINE: {
+            for (S32 ls_index = multi_line_string.min;
+                 ls_index < multi_line_string.min + multi_line_string.count; ls_index += 1) {
+                const Slice line_string = data->line_strings.v[ls_index];
+                for (S32 k = line_string.min; k < line_string.min + line_string.count - 1; k += 1) {
+                    const Vector2 a = Vector2FromCoord2(data->texture_coords.v[k]);
+                    const Vector2 b = Vector2FromCoord2(data->texture_coords.v[k + 1]);
+                    DrawLineEx(a, b, 5.f, line_style.paint.line_color);
+                }
             }
+        } break;
+        case SYMBOL: {
+            // TODO: not implemented, see
+            // https://docs.mapbox.com/style-spec/reference/layers/#layout-symbol-symbol-placement
+        } break;
+        case FILL:
+        case CIRCLE:
+            ERROR_MSG("invalid style type for line")
         }
     }
     EndTextureMode();
@@ -744,7 +782,7 @@ static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
     assert(mesh.triangleCount > 0);
     // check that we have colored all vertices
     assert(c % 4 == 0);
-    assert(v % 4 == 0);
+    assert(v % 3 == 0);
     assert(c / 4 == v / 3);
     temp_arena_memory_end(scratch);
     return mesh;
@@ -836,7 +874,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
                 MVT_ProtobufDataArrayPush(&layer_features,
                                           (MVT_ProtobufData){data.v + ip, feature_size});
                 ip += feature_size;
-                assert(ip + feature_size < data.size);
+                assert(ip < data.size);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
             case LAYER_FIELD_KEYS: {
@@ -897,8 +935,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
     dst_slice =                                                                                    \
         (Type##Slice){.v = arena_alloc_array(&vector_data_arena, Type, (size_t)(src_array).count), \
                       .count = (src_array).count};                                                 \
-    memcpy((dst_slice).v, &tile_geometry->texture_coords,                                          \
-           (size_t)tile_geometry->texture_coords.count * sizeof(Type));
+    memcpy((dst_slice).v, (src_array).d, (size_t)(src_array).count * sizeof(Type));
 
     // tile vector data, seperated in mesh (polygons) and texture, sprites/lines/circle
     // Transform the tile geometry into vector data that we can store on the GPU and cache for

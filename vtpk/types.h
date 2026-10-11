@@ -130,6 +130,7 @@ struct VtpkFile {
     mz_zip_archive *archive;
     VtpkFileRootProperties root_propreties;
     VT_StyleMap *layer_styles;
+    S32 layer_styles_count;
     AABB bounding_box;
     QuadTreeNodeArray quad_tree;
     S32 root_node;

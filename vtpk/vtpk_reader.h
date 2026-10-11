@@ -157,9 +157,10 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     }
     {
         const JsonNode *min_LOD = JsonFindKey(root, String8FromCString("minLOD"));
-        const JsonNode *max_LOD = JsonFindKey(root, String8FromCString("minLOD"));
+        const JsonNode *max_LOD = JsonFindKey(root, String8FromCString("maxLOD"));
         assert(min_LOD->type == JSON_INTEGER);
         assert(max_LOD->type == JSON_INTEGER);
+        assert(min_LOD < max_LOD);
         vtpk_file->root_propreties.lod_min = safe_cast_u32(min_LOD->num.u_value);
         vtpk_file->root_propreties.lod_max = safe_cast_u32(max_LOD->num.u_value);
     }
@@ -253,6 +254,7 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
     const JsonNode *layers = JsonFindKey(root, String8FromCString("layers"));
     assert(layers->type == JSON_ARRAY);
     vtpk_file->layer_styles = NULL;
+    vtpk_file->layer_styles_count = 0;
 
     for (JsonNode *layer_style = layers->children.first; layer_style != &json_node_null;
          layer_style = layer_style->next) {
@@ -314,10 +316,26 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
 
         for (U32 zoom = zoom_min; zoom < zoom_max; zoom += 1) {
             key.zoom = zoom;
+            String8 filter_key;
+            if (key.filter_key_hash == 0) {
+                filter_key = String8FromCString("");
+            } else {
+                filter_key = filter->children.first->next->text_value;
+            }
+            if (hmgeti(vtpk_file->layer_styles, key) != -1) {
+                DEBUG_MSG("[WARNING] Layer: %.*s, key: %.*s, value: %lld, zoom: %d already exists\n",
+                          (int)source_layer->text_value.len, source_layer->text_value.buf,
+                          (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
+            } else {
+                DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %lld, zoom: %d\n",
+                          (int)source_layer->text_value.len, source_layer->text_value.buf,
+                          (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
+            }
             hmput(vtpk_file->layer_styles, key, value);
+            vtpk_file->layer_styles_count += 1;
         }
-        temp_arena_memory_end(json_scratch);
     }
+    temp_arena_memory_end(json_scratch);
 }
 
 // Parse the whole VTPK Zip Bundle and set up internal datastructures

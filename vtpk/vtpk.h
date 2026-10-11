@@ -1,7 +1,6 @@
 #include "../arena.c"
 #include "../base.h"
 #include "../vendor/raymath.h"
-#include "mvt.h"
 #include "types.h"
 #include "vtpk_reader.h"
 #include <assert.h>
@@ -147,7 +146,7 @@ static void EndModeTile(void) { EndMode2D(); }
 
 static TileCamera ResetTileCamera(Screen screen) {
     return (TileCamera){
-        .zoom = 1.0f, // speicfies the zoom level. Is in the range (0; +infinity).
+        .zoom = 0.5f, // speicfies the zoom level. Is in the range (0; +infinity).
                       // the non integer part is used to interpolate between the tile sizes
                       // meaning it zooms the camera until the next tile size is hit.
         .rotation = 0.0f,
@@ -286,10 +285,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
 
     // Shader shader_blur = LoadShader(0, "shaders/blur.fs");
 
-    SetTargetFPS(30); // NOTE: for now
-    Color colors[13] = {RED,  GOLD,   LIME,  BLUE,    VIOLET, BROWN, LIGHTGRAY,
-                        PINK, YELLOW, GREEN, SKYBLUE, PURPLE, BEIGE};
-    S32 current_color = 0;
+    SetTargetFPS(60); // NOTE: for now
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
         // Update
@@ -323,7 +319,6 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
             // DrawRectangle(0, 512, tile_size, tile_size, RED);
             VectorTileHandleSlice tiles =
                 MeshesFromBoundingBox(vtpk_file, &draw_cache, ClampBot((S32)camera.zoom, 0));
-            current_color = 0;
             for (S32 i = 0; i < tiles.count; i += 1) {
                 VectorTileHandle tile = tiles.v[i];
                 assert(tile.status == DATA_PRESENT);
@@ -334,8 +329,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     rlLoadIdentity();
                     rlMultMatrixf(MatrixToFloat(mesh_transform));
 
-                    material.maps[MATERIAL_MAP_DIFFUSE].color = colors[current_color];
-                    current_color = (current_color + 1) % 13;
+                    material.maps[MATERIAL_MAP_DIFFUSE].color = RAYWHITE;
                     mesh_pos.x = mesh_transform.m12;
                     mesh_pos.y = mesh_transform.m13;
                     mesh_pos.z = mesh_transform.m14;
@@ -369,6 +363,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     rlLoadIdentity();
                     rlMultMatrixf(MatrixToFloat(texture_transform));
                     // BeginShaderMode(shader_blur);
+                    assert(IsTextureValid(tiles.v[i].gpu_data.texture.texture));
                     DrawTextureRec(
                         tiles.v[i].gpu_data.texture.texture,
                         (Rectangle){
