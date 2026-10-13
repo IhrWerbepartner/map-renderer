@@ -79,7 +79,7 @@ static VectorTileHandleSlice MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCach
             AABBContains(bbox, vtpk_file->quad_tree.d[handle.quad_tree_node].tile.coordinate)) {
             VectorTileHandleArrayPush(&draw_cache->back_buffer, handle);
         } else {
-            UnloadRenderTexture(handle.gpu_data.texture);
+            //UnloadRenderTexture(handle.gpu_data.texture);
         }
     }
 

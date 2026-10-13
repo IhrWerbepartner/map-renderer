@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base_defines.h"
 #include <assert.h>
 #include <stdalign.h>
 #include <stdbool.h>
@@ -9,15 +10,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool is_power_of_two(uintptr_t x) { return (x & (x - 1)) == 0; }
+static INTERNAL_FORCEINLINE bool is_power_of_two(uintptr_t x) { return (x & (x - 1)) == 0; }
 
-uintptr_t align_forward(uintptr_t ptr, size_t align) {
+static INTERNAL_FORCEINLINE uintptr_t align_forward(uintptr_t ptr, size_t align) {
   assert(is_power_of_two(align));
 
   uintptr_t p = ptr;
-  uintptr_t a = (uintptr_t)align;
+  const uintptr_t a = (uintptr_t)align;
   // Same as (p % a) but faster as 'a' is a power of two
-  uintptr_t modulo = p & (a - 1);
+  const uintptr_t modulo = p & (a - 1);
 
   if (modulo != 0) {
     // If 'p' address is not aligned, push the address to the
@@ -39,14 +40,14 @@ struct Arena {
   size_t curr_offset;
 };
 
-void arena_init(Arena *a, void *backing_buffer, size_t backing_buffer_length) {
+static INTERNAL_FORCEINLINE void arena_init(Arena *a, void *backing_buffer, size_t backing_buffer_length) {
   a->buf = (unsigned char *)backing_buffer;
   a->buf_len = backing_buffer_length;
   a->curr_offset = 0;
   a->prev_offset = 0;
 }
 
-void *arena_alloc_align(Arena *a, size_t size, size_t align) {
+static INTERNAL_FORCEINLINE void *arena_alloc_align(Arena *a, size_t size, size_t align) {
   // Align 'curr_offset' forward to the specified alignment
   uintptr_t curr_ptr = (uintptr_t)a->buf + (uintptr_t)a->curr_offset;
   uintptr_t offset = align_forward(curr_ptr, align);
@@ -68,7 +69,7 @@ void *arena_alloc_align(Arena *a, size_t size, size_t align) {
 }
 
 // Because C doesn't have default parameters
-void *arena_alloc(Arena *a, size_t size) {
+static INTERNAL_FORCEINLINE void *arena_alloc(Arena *a, size_t size) {
   return arena_alloc_align(a, size, DEFAULT_ALIGNMENT);
 }
 
@@ -77,7 +78,7 @@ void *arena_alloc(Arena *a, size_t size) {
 #define arena_alloc_array(a, T, c)                                             \
   arena_alloc_array_aligned(a, T, c, Max(8, alignof(T)))
 
-void *arena_resize_align(Arena *a, void *old_memory, size_t old_size,
+static INTERNAL_FORCEINLINE void *arena_resize_align(Arena *a, void *old_memory, size_t old_size,
                          size_t new_size, size_t align) {
   unsigned char *old_mem = (unsigned char *)old_memory;
 
@@ -108,13 +109,13 @@ void *arena_resize_align(Arena *a, void *old_memory, size_t old_size,
 }
 
 // Because C doesn't have default parameters
-void *arena_resize(Arena *a, void *old_memory, size_t old_size,
+static INTERNAL_FORCEINLINE void *arena_resize(Arena *a, void *old_memory, size_t old_size,
                    size_t new_size) {
   return arena_resize_align(a, old_memory, old_size, new_size,
                             DEFAULT_ALIGNMENT);
 }
 
-void arena_free_all(Arena *a) {
+static INTERNAL_FORCEINLINE void arena_free_all(Arena *a) {
   a->curr_offset = 0;
   a->prev_offset = 0;
 }
@@ -127,7 +128,7 @@ struct Temp_Arena_Memory {
   size_t curr_offset;
 };
 
-Temp_Arena_Memory temp_arena_memory_begin(Arena *a) {
+static INTERNAL_FORCEINLINE Temp_Arena_Memory temp_arena_memory_begin(Arena *a) {
   Temp_Arena_Memory temp;
   temp.arena = a;
   temp.prev_offset = a->prev_offset;
@@ -135,12 +136,12 @@ Temp_Arena_Memory temp_arena_memory_begin(Arena *a) {
   return temp;
 }
 
-void temp_arena_memory_end(Temp_Arena_Memory temp) {
+static INTERNAL_FORCEINLINE void temp_arena_memory_end(Temp_Arena_Memory temp) {
   temp.arena->prev_offset = temp.prev_offset;
   temp.arena->curr_offset = temp.curr_offset;
 }
 
-Temp_Arena_Memory scratch_get_free(Arena **arenaPool, int arenaPoolSize,
+static INTERNAL_FORCEINLINE Temp_Arena_Memory scratch_get_free(Arena **arenaPool, int arenaPoolSize,
                                    Arena **conflictingArenas,
                                    int conflictingArenaSize) {
   for (int i = 0; i < arenaPoolSize; i++) {

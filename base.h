@@ -1,5 +1,6 @@
 #pragma once
 #include "fixed-array.c"
+#include "base_defines.h"
 #include <assert.h>
 #include <float.h>
 #include <raylib.h>
@@ -10,9 +11,6 @@
 // hashmap datastructure
 #define STB_DS_IMPLEMENTATION
 #include "vendor/stb_ds.h"
-
-#define internal static
-#define global static
 
 #define DEBUG_MSG(...) fprintf(stderr, __VA_ARGS__);
 
@@ -27,14 +25,6 @@
             exit(EXIT_FAILURE);                                                                    \
         }                                                                                          \
     } while (0);
-
-#if defined(_MSC_VER)
-#define INTERNAL_FORCEINLINE __forceinline inline
-#elif defined(__clang__) || defined(__GNUC__)
-#define INTERNAL_FORCEINLINE __attribute__((always_inline)) inline
-#else
-#error need force inline for this compiler
-#endif
 
 #define CROSS(v0, v1, v2)                                                                          \
     (((v1).x - (v0).x) * ((v2).y - (v0).y) - ((v1).y - (v0).y) * ((v2).x - (v0).x))

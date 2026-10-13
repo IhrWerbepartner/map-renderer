@@ -2,6 +2,7 @@
 #include "../base.h"
 #include "../string8.h"
 #include "../vendor/miniz.c"
+#include <assert.h>
 typedef enum QuadTreeNodeType QuadTreeNodeType;
 enum QuadTreeNodeType {
     EMPTY = 0, // no TileIndexRecord exists
@@ -101,8 +102,11 @@ struct VT_StyleMapKey {
     U64 layer_hash;
     U64 filter_key_hash;
     S64 filter_value;
-    U32 zoom;
+    // NOTE: setting this to a 32-bit value introduces UB because padding can take unspecified
+    // values, possibly destroying the bitwise memcmp inside stb_ds' hashmap!!
+    U64 zoom;
 };
+static_assert(sizeof(VT_StyleMapKey) == 32, "type has wrong size");
 
 typedef enum VT_StylePaintType VT_StylePaintType;
 enum VT_StylePaintType { FILL, LINE, SYMBOL, CIRCLE };

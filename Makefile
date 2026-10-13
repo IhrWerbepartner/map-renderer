@@ -1,7 +1,8 @@
 GEO_FILE=./samples/bmapv_vtpk_3857.vtpk
 EXE_NAME= map-renderer
 EXE_NAME_UNOPTIMIZED= unoptimized-map-renderer
-CFLAGS= -Wextra -Wall -Wundef -Wno-unused-function -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-enum -Werror=switch -Wconversion -DRAYMATH_USE_SIMD_INTRINSICS -march=native
+LINUX_CC=gcc
+CFLAGS= -Wextra -Wall -Wundef -Wno-unused-function -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Wcast-qual -Wswitch-enum -Werror=switch -Wconversion -DRAYMATH_USE_SIMD_INTRINSICS -march=native -mtune=native -ftrapv -fno-strict-aliasing -std=c23 -D_GNU_SOURCE
 
 SOURCE_FILES= map_renderer.c arena.c base.h triangulate/earcut.h json_parser.h string8.h vtpk/vtpk.h vtpk/vtpk_reader.h vtpk/mvt.h
 WINDOWS_INCLUDES="C:\raylib\w64devkit\include" "C:\raylib\w64devkit\lib\libraylib.a"
@@ -23,16 +24,16 @@ windows-optimized: $(SOURCE_FILES)
 	zig cc -o render_release.exe map_renderer.c -I $(WINDOWS_INCLUDES) $(WINDOWS_LDFLAGS) $(WINDOWS_DEFINES) -g -O3 -march=native
 
 release: $(SOURCE_FILES)
-	gcc $(CFLAGS) $(LDFLAGS) -g map_renderer.c -o $(EXE_NAME) -O2
+	$(LINUX_CC) $(CFLAGS) $(LDFLAGS) -g map_renderer.c -o $(EXE_NAME) -O2
 
 release-profile: $(SOURCE_FILES)
-	gcc $(CFLAGS) $(LDFLAGS) -g -finstrument-functions map_renderer.c -o $(EXE_NAME)_profile -O2 -DINTERNAL_ENABLE_PROFILE
+	$(LINUX_CC) $(CFLAGS) $(LDFLAGS) -g -finstrument-functions map_renderer.c -o $(EXE_NAME)_profile -O2 -DINTERNAL_ENABLE_PROFILE
 
 unoptimized: $(SOURCE_FILES)
-	gcc -DDEBUG $(CFLAGS) $(LDFLAGS) -g -finstrument-functions map_renderer.c -o $(EXE_NAME_UNOPTIMIZED)
+	$(LINUX_CC) -DDEBUG $(CFLAGS) $(LDFLAGS) -g -finstrument-functions map_renderer.c -o $(EXE_NAME_UNOPTIMIZED)
 
 release-stripped: $(SOURCE_FILES)
-	gcc $(CFLAGS) $(LDFLAGS) map_renderer.c -o map-renderer-release-stripped -O2
+	$(LINUX_CC) $(CFLAGS) $(LDFLAGS) map_renderer.c -o map-renderer-release-stripped -O2
 
 stat: $(EXE_NAME)
 	perf stat -d ./$(EXE_NAME) $(GEO_FILE)

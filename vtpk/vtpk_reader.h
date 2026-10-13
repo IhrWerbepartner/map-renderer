@@ -209,19 +209,47 @@ static Color ColorFromRGBAString(String8 color) {
     return (Color){red, green, blue, alpha};
 }
 
+// returns the Color from a rgba(r,g,b,a) string.
+static Color ColorFromHexString(String8 color) {
+    String8 prefix = String8FromCString("#");
+    if (!String8StartsWith(color, prefix) || color.len != 7) {
+        return BLANK;
+    }
+    const char *cursor = color.buf + prefix.len;
+    char *endptr;
+    const U64 color_rgb = (U64)strtol(cursor, &endptr, 16);
+    assert(endptr == color.buf + color.len);
+    return (Color){
+        safe_cast_u8((color_rgb & 0xFF0000) >> 16),
+        safe_cast_u8((color_rgb & 0x00FF00) >> 8),
+        safe_cast_u8((color_rgb & 0x0000FF)),
+        255,
+    };
+}
+
+// attempts to parse a color string. It tries different patterns to test if it fits one
+static Color ColorFromString(String8 color) {
+    const String8 prefix = String8FromCString("rgba(");
+    if (String8StartsWith(color, prefix)) {
+        return ColorFromRGBAString(color);
+    } else {
+        return ColorFromHexString(color);
+    }
+}
+
 // returns the style information of a layer given its type.
 static VT_StyleMapValue StyleValueFromPaint(const JsonNode *paint, VT_StylePaintType paint_type) {
     switch (paint_type) {
     case FILL: {
         const JsonNode *fill_color = JsonFindKey(paint, String8FromCString("fill-color"));
         assert(fill_color->type == JSON_STRING);
-        Color color = ColorFromRGBAString(fill_color->text_value);
+        const Color color = ColorFromString(fill_color->text_value);
         return (VT_StyleMapValue){.type = paint_type, .paint = {.fill_color = color}};
     } break;
     case LINE: {
         const JsonNode *line_color = JsonFindKey(paint, String8FromCString("line-color"));
         assert(line_color->type == JSON_STRING);
-        Color color = ColorFromRGBAString(line_color->text_value);
+        const Color color = ColorFromString(line_color->text_value);
         return (VT_StyleMapValue){.type = paint_type, .paint = {.line_color = color}};
     } break;
     case SYMBOL: {
@@ -232,7 +260,7 @@ static VT_StyleMapValue StyleValueFromPaint(const JsonNode *paint, VT_StylePaint
     case CIRCLE: {
         const JsonNode *circle_color = JsonFindKey(paint, String8FromCString("circle-color"));
         assert(circle_color->type == JSON_STRING);
-        Color color = ColorFromRGBAString(circle_color->text_value);
+        const Color color = ColorFromString(circle_color->text_value);
         return (VT_StyleMapValue){.type = paint_type, .paint = {.circle_color = color}};
     } break;
     default:
@@ -323,11 +351,11 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
                 filter_key = filter->children.first->next->text_value;
             }
             if (hmgeti(vtpk_file->layer_styles, key) != -1) {
-                DEBUG_MSG("[WARNING] Layer: %.*s, key: %.*s, value: %ld, zoom: %d already exists\n",
+                DEBUG_MSG("[WARNING] Layer: %.*s, key: %.*s, value: %ld, zoom: %lu already exists\n",
                           (int)source_layer->text_value.len, source_layer->text_value.buf,
                           (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
             } else {
-                DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %ld, zoom: %d\n",
+                DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %ld, zoom: %lu\n",
                           (int)source_layer->text_value.len, source_layer->text_value.buf,
                           (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
             }

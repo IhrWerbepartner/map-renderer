@@ -2,6 +2,7 @@
 #include "base.h"
 #include "geojson.h"
 #include "string8.h"
+#include "vtpk/mvt.h"
 #include "vtpk/vtpk.h"
 #include <assert.h>
 #include <raylib.h>
@@ -21,6 +22,54 @@
 #include "vendor/spall_native_auto.h"
 #endif
 
+// here systems can request a static allocation at startup of the program
+// this enables setting flags on pages, instead of relying on the os to figure it out
+void StaticMemoryInit(void) {
+    //  ================= GLOBAL ARENAS =================
+    {
+        const U64 backing_buffer_size = GB(1);
+#ifdef _WIN32
+        void *backing_buffer =
+            VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2MB, -1, 0);
+        if (backing_buffer == MAP_FAILED) {
+            ERROR_MSG("unable to map memory, errno: %d", errno);
+        }
+#endif
+        arena_init(arenas[0], backing_buffer, backing_buffer_size);
+
+#ifdef _WIN32
+        backing_buffer =
+            VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2MB, -1, 0);
+        if (backing_buffer == MAP_FAILED) {
+            ERROR_MSG("unable to map memory");
+        }
+#endif
+        arena_init(arenas[1], backing_buffer, backing_buffer_size);
+    }
+
+    // ================= MVT_Parser =================
+    {
+        const U64 backing_buffer_size = GB(1);
+#ifdef _WIN32
+        void *backing_buffer =
+            VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2MB, -1, 0);
+        if (backing_buffer == MAP_FAILED) {
+            ERROR_MSG("unable to map memory, errno: %d", errno);
+        }
+        arena_init(&vector_data_arena, backing_buffer, backing_buffer_size);
+#endif
+    }
+}
+
 void usage(char *program_name) { printf("usage: %s <filepath>\n", program_name); }
 
 int main(int argc, char **argv) {
@@ -28,31 +77,7 @@ int main(int argc, char **argv) {
         usage(argv[0]);
         exit(EXIT_FAILURE);
     }
-    const U64 backing_buffer_size = GB(2);
-#ifdef _WIN32
-    void *backing_buffer =
-        VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-#else
-    void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
-                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2GB, -1, 0);
-    if (backing_buffer == MAP_FAILED) {
-        ERROR_MSG("unable to map memory, errno: %d", errno);
-    }
-#endif
-    arena_init(arenas[0], backing_buffer, backing_buffer_size);
-
-#ifdef _WIN32
-    backing_buffer =
-        VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-#else
-    backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
-                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2GB, -1, 0);
-    if (backing_buffer == MAP_FAILED) {
-        ERROR_MSG("unable to map memory");
-    }
-#endif
-
-    arena_init(arenas[1], backing_buffer, backing_buffer_size);
+    StaticMemoryInit();
 #ifdef INTERNAL_ENABLE_PROFILE
     spall_auto_init((char *)"profile.spall");
     U32 thread_id = 0;

@@ -10,17 +10,17 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#include <time.h>
 
 // ------------------------  LIMITS  ------------------------
 #define MVT_TEXTURE_SIZE (512 * 4)
-#define MVT_MESH_SIZE (512 * 8)
-#define LAYER_KEYS_MAX (1000)
-#define LAYER_VALUES_MAX (1000)
+#define MVT_MESH_SIZE (512 * 4)
+#define LAYER_KEYS_MAX (100)
+#define LAYER_VALUES_MAX (100)
 #define LAYER_FEATURES_MAX (100000)
 
 // ------------------------  STATIC DATA  ---------------------
-static unsigned char vector_data_buf[GB(1)] = {0};
-static Arena vector_data_arena = (Arena){vector_data_buf, sizeof(vector_data_buf), 0, 0};
+static Arena vector_data_arena = {0};
 
 typedef struct VT_VectorDataMap VT_VectorDataMap;
 struct VT_VectorDataMap {
@@ -522,8 +522,9 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
 
         // assume there may be no filter key-value pairs, therefore set the initial value to
         // a lookup of layer_name and zoom.
-        VT_StyleMapKey key = (VT_StyleMapKey){.layer_hash = HashFromString8(0, layer_name),
-                                              .zoom = (U32)tile_coordinate.level};
+        VT_StyleMapKey key = {0};
+        key.layer_hash = HashFromString8(0, layer_name);
+        key.zoom = (U32)tile_coordinate.level;
         S64 feature_style_index = hmgeti(style_map, key);
 
         Slice geometry_range = {0};
@@ -589,6 +590,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             continue;
         }
         assert(feature_style_index != -1);
+        assert(feature_style_index < hmlen(style_map));
 
         switch (geometry_type) {
         case GEOMETRY_TYPE_UNKNOWN: {
@@ -629,7 +631,10 @@ static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleM
     ClearBackground(BLANK);
     for (S32 i = 0; i < data->multi_points.count; i += 1) {
         const Slice multi_point = data->multi_points.v[i];
-        const VT_StyleMapValue point_style = styles[data->mutli_point_style_indices.v[i]].value;
+        const S64 point_style_index = data->mutli_point_style_indices.v[i];
+        assert(point_style_index != -1);
+        assert(point_style_index < hmlen(styles));
+        const VT_StyleMapValue point_style = styles[point_style_index].value;
         assert(point_style.type == SYMBOL || point_style.type == CIRCLE);
         for (S32 j = multi_point.min; j < multi_point.count; j += 1) {
             const Vector2 point = Vector2FromCoord2(data->texture_coords.v[j]);
@@ -650,6 +655,7 @@ static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleM
         const Slice multi_line_string = data->multi_line_strings.v[mls_index];
         const S64 line_style_index = data->multi_line_style_indices.v[mls_index];
         assert(line_style_index != -1);
+        assert(line_style_index < hmlen(styles));
         const VT_StyleMapValue line_style = styles[line_style_index].value;
         switch (line_style.type) {
         case LINE: {
@@ -681,6 +687,7 @@ static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleM
 static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
                                     const VT_TileGeometry *src_geometry,
                                     const VT_StyleMap *style_map) {
+    // TODO: handle if no mesh geometry is present in this tile
     Temp_Arena_Memory scratch = GetScratch();
 
     // account for some triangulation that might violate #triangulated triangles = #coords - 2.
@@ -733,6 +740,7 @@ static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
     // create a big mesh (triangle soup) to avoid unsigned short limit for
     // indicdes in openGL.
     // Furthermore we need to set the color for each vertex.
+    assert(triangles.count > 0);
     const S32 vertex_soup_count = triangles.count * 3;
     const Mesh mesh = {
         // x, y, z coords per vertex
@@ -893,7 +901,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
                 assert(layer_field.wire_type == LEN);
                 const U32 value_size = U32FromVarInt128(data, &ip);
                 assert(value_size > 0);
-                ProtobufValue value = ProtobufParseValue(data, &ip);
+                const ProtobufValue value = ProtobufParseValue(data, &ip);
                 ProtobufValueArrayPush(&layer_values, value);
                 assert(saved_ip < ip); // ensure we are making progress
             } break;
@@ -954,10 +962,42 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
 
     // render to texture
     const RenderTexture2D texture = LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
-    TileTextureFromVectorData(&vector_data, style_map, &texture);
+    {
+        clock_t tile_parse_start, tile_parse_end;
+        double tile_parse_cpu_time_seconds;
+
+        tile_parse_start = clock();
+        // work done here
+        // ------------------------------------------------------------------
+        TileTextureFromVectorData(&vector_data, style_map, &texture);
+        // ------------------------------------------------------------------
+        tile_parse_end = clock();
+        tile_parse_cpu_time_seconds =
+            ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
+        fprintf(stdout, "TEXTURING: c: %d, r: %d, l: %d: %d verts in %f MS\n", tile_coordinate.col,
+                tile_coordinate.row, tile_coordinate.level, tile_geometry->texture_coords.count,
+                Thousand(tile_parse_cpu_time_seconds));
+    }
 
     // generate mesh
-    const Mesh tile_mesh = MeshFromPolygonGeometry(&vector_data, tile_geometry, style_map);
+    Mesh tile_mesh;
+    {
+        clock_t tile_parse_start, tile_parse_end;
+        double tile_parse_cpu_time_seconds;
+
+        tile_parse_start = clock();
+        // work done here
+        // ------------------------------------------------------------------
+        tile_mesh = MeshFromPolygonGeometry(&vector_data, tile_geometry, style_map);
+        // ------------------------------------------------------------------
+        tile_parse_end = clock();
+        tile_parse_cpu_time_seconds =
+            ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
+        fprintf(stdout, "TRIANGULATING: c: %d, r: %d, l: %d: %d polys, %d verts in %f MS\n",
+                tile_coordinate.col, tile_coordinate.row, tile_coordinate.level,
+                tile_geometry->polygon_features.count, tile_geometry->mesh_coords.count,
+                Thousand(tile_parse_cpu_time_seconds));
+    }
 
     // cache vector data for quick redraw
     hmput(vector_data_map, tile_coordinate, vector_data);

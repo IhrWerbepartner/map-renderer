@@ -162,6 +162,7 @@
    callbacks to the zlib and archive API's, and a few stand-alone helper API's which don't provide custom user
    functions (such as tdefl_compress_mem_to_heap() and tinfl_decompress_mem_to_heap()) won't work. */
 //#define MINIZ_NO_MALLOC // TODO: figure out how to avoid pulling in malloc
+#define _LARGEFILE64_SOURCE 1
 
 #ifdef MINIZ_NO_INFLATE_APIS
 #define MINIZ_NO_ARCHIVE_APIS
