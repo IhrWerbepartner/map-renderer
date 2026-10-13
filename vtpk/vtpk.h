@@ -1,6 +1,7 @@
 #include "../arena.c"
 #include "../base.h"
 #include "../vendor/raymath.h"
+#include "mvt.h"
 #include "types.h"
 #include "vtpk_reader.h"
 #include <assert.h>
@@ -13,7 +14,7 @@
 #endif
 
 // NOTE: fine tune
-#define DRAW_CACHE_SIZE (64)
+#define DRAW_CACHE_SIZE (40)
 #define DRAW_TILE_PIXEL_COUNT 512
 
 typedef struct DrawCache DrawCache;
@@ -44,6 +45,14 @@ static void PrintMissingTiles(S32Slice s, QuadTreeNodeArray quad_tree) {
 }
 #endif
 
+// initializes the gpu_buffers inside the draw cache
+static void InitDrawCache(DrawCache *draw_cache) {
+    for (S32 i = 0; i < draw_cache->front_buffer.capacity; i += 1) {
+        draw_cache->front_buffer.d[i].gpu_data.texture =
+            LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
+    }
+}
+
 // returns a []S32 with all indices of the quad_tree that are visible but not currently in
 // the cache
 // TODO: make this not a trivial O(n^2) operation but something smarter like using a
@@ -68,49 +77,72 @@ static S32Slice NonCachedTileIndices(Arena *arena, const S32Slice visible_tiles,
 
 // copy tiles within AABB to back buffer and request missing ones fromt the
 // tilecache. finally swap back and front buffer.
+// furthemore take care that all GPU_Buffers/Handles remain the same set.
+// This ensures that we do not need to create new textures.
 static VectorTileHandleSlice MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache,
                                                    S32 zoom_level) {
+    assert(draw_cache->back_buffer.capacity == draw_cache->front_buffer.capacity);
+    Temp_Arena_Memory scratch = GetScratch();
+
     // clear back buffer (becomes new front)
+    // we need to iterate over the whole buffer (capaicty!) to not loose any tiles
+    // 1. copy over all tiles still visible
+    // 2. save all gpu_buffers that are now free for reuse on a stack
     VectorTileHandleArrayReset(&draw_cache->back_buffer);
+    VectorTileGPU_DataArray unused_gpu_buffers =
+        VectorTileGPU_DataArrayNew(scratch.arena, DRAW_CACHE_SIZE);
     const AABB bbox = vtpk_file->bounding_box;
-    for (S32 i = 0; i < draw_cache->front_buffer.count; i += 1) {
+    for (S32 i = 0; i < draw_cache->front_buffer.capacity; i += 1) {
         const VectorTileHandle handle = draw_cache->front_buffer.d[i];
+        // just copy over the data
+        if (i >= draw_cache->front_buffer.count) {
+            VectorTileGPU_DataArrayPush(&unused_gpu_buffers, handle.gpu_data);
+            continue;
+        }
+
+        // this tile was visible before perform the actual test
         if (handle.coordinate.level == zoom_level &&
             AABBContains(bbox, vtpk_file->quad_tree.d[handle.quad_tree_node].tile.coordinate)) {
             VectorTileHandleArrayPush(&draw_cache->back_buffer, handle);
         } else {
-            //UnloadRenderTexture(handle.gpu_data.texture);
+            VectorTileGPU_DataArrayPush(&unused_gpu_buffers, handle.gpu_data);
         }
     }
 
-    ScratchArena() {
-        S32Array visible_tiles = S32ArrayNew(arena_auto_close_latch.scratch.arena, DRAW_CACHE_SIZE);
-        QuadTreeFind(QuadTreeNodeSliceFromArray(&vtpk_file->quad_tree), vtpk_file->root_node, bbox,
-                     zoom_level, &visible_tiles);
+    S32Array visible_tiles = S32ArrayNew(scratch.arena, DRAW_CACHE_SIZE);
+    QuadTreeFind(QuadTreeNodeSliceFromArray(&vtpk_file->quad_tree), vtpk_file->root_node, bbox,
+                 zoom_level, &visible_tiles);
 #ifdef DEBUG
-        // fprintf(stderr, "visible_tiles: ");
-        // PrintMissingTiles(S32SliceFromArray(&visible_tiles), vtpk_file->quad_tree);
+    // fprintf(stderr, "visible_tiles: ");
+    // PrintMissingTiles(S32SliceFromArray(&visible_tiles), vtpk_file->quad_tree);
 #endif
-        // TODO: it would be cool to get these indices in a sorted order
-        // this makes intersecting them much cheaper.
-        // lets see if we can get this invariant enforced in the quad tree!!
-        const S32Slice missing_tile_indices = NonCachedTileIndices(
-            arena_auto_close_latch.scratch.arena, S32SliceFromArray(&visible_tiles),
-            VectorTileHandleSliceFromArray(&draw_cache->back_buffer));
+    // TODO: it would be cool to get these indices in a sorted order
+    // this makes intersecting them much cheaper.
+    // lets see if we can get this invariant enforced in the quad tree!!
+    const S32Slice missing_tile_indices =
+        NonCachedTileIndices(scratch.arena, S32SliceFromArray(&visible_tiles),
+                             VectorTileHandleSliceFromArray(&draw_cache->back_buffer));
 #ifdef DEBUG
-        // fprintf(stderr, "missing_tiles: ");
-        // PrintMissingTiles(missing_tile_indices, vtpk_file->quad_tree);
+    // fprintf(stderr, "missing_tiles: ");
+    // PrintMissingTiles(missing_tile_indices, vtpk_file->quad_tree);
 #endif
-        VectorTileHandlesFromFile(vtpk_file, missing_tile_indices);
-        for (S32 i = 0; i < missing_tile_indices.count; i += 1) {
-            const VectorTileHandle handle = vtpk_file->quad_tree.d[missing_tile_indices.v[i]].tile;
-            assert(handle.status == DATA_PRESENT);
-            VectorTileHandleArrayPush(&draw_cache->back_buffer, handle);
-        }
+
+    VectorTileHandlesFromFile(vtpk_file, missing_tile_indices, &draw_cache->back_buffer,
+                              &unused_gpu_buffers);
+
+    // copy over the rest of the gpu_buffers in the back of the array
+    // this is to not loose any buffers
+    const S32 visible_tiles_count = draw_cache->back_buffer.count;
+    while (unused_gpu_buffers.count > 0) {
+        VectorTileHandle dummy_handle = {0};
+        dummy_handle.gpu_data = VectorTileGPU_DataArrayPop(&unused_gpu_buffers);
+        VectorTileHandleArrayPush(&draw_cache->back_buffer, dummy_handle);
     }
+    draw_cache->back_buffer.count = visible_tiles_count;
 
     // swap back and front buffers
     Swap(VectorTileHandleArray, draw_cache->front_buffer, draw_cache->back_buffer);
+    temp_arena_memory_end(scratch);
     return VectorTileHandleSliceFromArray(&draw_cache->front_buffer);
 }
 
@@ -277,15 +309,16 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
 
     TileCamera camera = ResetTileCamera(screen);
 
-    const S32 draw_cache_size = DRAW_CACHE_SIZE;
-    DrawCache draw_cache = (DrawCache){VectorTileHandleArrayNew(scratch.arena, draw_cache_size),
-                                       VectorTileHandleArrayNew(scratch.arena, draw_cache_size)};
+    DrawCache draw_cache = (DrawCache){VectorTileHandleArrayNew(scratch.arena, DRAW_CACHE_SIZE),
+                                       VectorTileHandleArrayNew(scratch.arena, DRAW_CACHE_SIZE),
+                                       VectorTileGPU_DataArrayNew(scratch.arena, DRAW_CACHE_SIZE)};
+    InitDrawCache(&draw_cache);
     Material material = LoadMaterialDefault();
     material.maps[MATERIAL_MAP_DIFFUSE].color = BLUE;
 
     // Shader shader_blur = LoadShader(0, "shaders/blur.fs");
 
-    SetTargetFPS(60); // NOTE: for now
+    SetTargetFPS(60);            // NOTE: for now
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
         // Update
@@ -320,8 +353,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
             VectorTileHandleSlice tiles =
                 MeshesFromBoundingBox(vtpk_file, &draw_cache, ClampBot((S32)camera.zoom, 0));
             for (S32 i = 0; i < tiles.count; i += 1) {
-                VectorTileHandle tile = tiles.v[i];
-                assert(tile.status == DATA_PRESENT);
+                const VectorTileHandle tile = tiles.v[i];
                 if (render_options.show_meshes) {
                     const Matrix mesh_transform = ModelTransformFromCoords(
                         tile.coordinate, MVT_MESH_SIZE, DRAW_TILE_PIXEL_COUNT);
@@ -363,9 +395,9 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     rlLoadIdentity();
                     rlMultMatrixf(MatrixToFloat(texture_transform));
                     // BeginShaderMode(shader_blur);
-                    assert(IsTextureValid(tiles.v[i].gpu_data.texture.texture));
+                    assert(IsTextureValid(tile.gpu_data.texture.texture));
                     DrawTextureRec(
-                        tiles.v[i].gpu_data.texture.texture,
+                        tile.gpu_data.texture.texture,
                         (Rectangle){
                             .x = 0, .y = 0, .width = MVT_TEXTURE_SIZE, .height = -MVT_TEXTURE_SIZE},
                         (Vector2){.x = 0, .y = MVT_TEXTURE_SIZE}, WHITE);

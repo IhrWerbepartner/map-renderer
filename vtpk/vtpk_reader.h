@@ -351,9 +351,10 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
                 filter_key = filter->children.first->next->text_value;
             }
             if (hmgeti(vtpk_file->layer_styles, key) != -1) {
-                DEBUG_MSG("[WARNING] Layer: %.*s, key: %.*s, value: %ld, zoom: %lu already exists\n",
-                          (int)source_layer->text_value.len, source_layer->text_value.buf,
-                          (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
+                DEBUG_MSG(
+                    "[WARNING] Layer: %.*s, key: %.*s, value: %ld, zoom: %lu already exists\n",
+                    (int)source_layer->text_value.len, source_layer->text_value.buf,
+                    (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
             } else {
                 DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %ld, zoom: %lu\n",
                           (int)source_layer->text_value.len, source_layer->text_value.buf,
@@ -417,130 +418,146 @@ static void QuadTreeFind(const QuadTreeNodeSlice quad_tree, S32 root, AABB bound
 
 // updates all vector tile handles that are referenced with the corresponding
 // indices into the quad tree
-static void VectorTileHandlesFromFile(VtpkFile *file, const S32Slice tile_indices) {
+static void VectorTileHandlesFromFile(VtpkFile *vtpk_file, const S32Slice missing_tile_indices,
+                                      VectorTileHandleArray *tile_handles,
+                                      VectorTileGPU_DataArray *free_gpu_buffers) {
     Temp_Arena_Memory scratch = GetScratch();
     struct {
         char *key;
         U8 *value;
     } *bundle_files_map;
     sh_new_arena(bundle_files_map);
-    for (S32 i = 0; i < tile_indices.count; i += 1) {
-        VectorTileHandle *tile = &file->quad_tree.d[tile_indices.v[i]].tile;
-        if (tile->status == DATA_PRESENT) {
-            continue;
-        }
-        // READ AND DECOMPRESS PROTOBUF TILE DATA
-        clock_t decompress_start, decompress_end;
-        double decompress_cpu_time_seconds;
 
-        decompress_start = clock();
+    for (S32 i = 0; i < missing_tile_indices.count; i += 1) {
+        VectorTileHandle tile = vtpk_file->quad_tree.d[missing_tile_indices.v[i]].tile;
+        VectorTileGPU_Data gpu_buffer = VectorTileGPU_DataArrayPop(free_gpu_buffers);
 
-        const S32 tile_file_row = (tile->coordinate.row / 128) * 128;
-        const S32 tile_file_col = (tile->coordinate.col / 128) * 128;
-        char bundle_filename[40] = {0};
-        const S32 filename_size =
-            snprintf(bundle_filename, sizeof(bundle_filename), "p12/tile/L%02d/R%04xC%04x.bundle",
-                     tile->coordinate.level, tile_file_row, tile_file_col);
-        assert(filename_size == 30);
-        const U32 file_index = FileIndexFromFileName(file->archive, bundle_filename);
-        const U64 file_size = UncompressedFileSize(file->archive, file_index);
-        U8 *file_content = shget(bundle_files_map, &bundle_filename);
-        if (file_content == NULL) {
-            clock_t tile_parse_start, tile_parse_end;
-            double tile_parse_cpu_time_seconds;
+        const S64 tile_data_index = hmgeti(vector_data_map, tile.coordinate);
+        if (tile_data_index != -1) {
+            // tile present in vector_data cache
+            const VT_VectorData vector_data = vector_data_map[tile_data_index].value;
+            TileTextureFromVectorData(&vector_data, vtpk_file->layer_styles, &gpu_buffer.texture);
+            gpu_buffer.mesh = MeshFromVectorData(&vector_data);
 
-            tile_parse_start = clock();
-            file_content = arena_alloc(scratch.arena, file_size);
-            if (!mz_zip_reader_extract_to_mem(file->archive, file_index, file_content, file_size,
-                                              0)) {
-                ERROR_MSG("can not open zip archive: '%s'\n",
-                          mz_zip_get_error_string(file->archive->m_last_error));
+        } else {
+            // else we need to read, decompress the corresponding .bundle file and parse the
+            // protobuf data into renderable vector information.
+            clock_t decompress_start, decompress_end;
+            double decompress_cpu_time_seconds;
+            decompress_start = clock();
+
+            const S32 tile_file_row = (tile.coordinate.row / 128) * 128;
+            const S32 tile_file_col = (tile.coordinate.col / 128) * 128;
+            char bundle_filename[40] = {0};
+            const S32 filename_size = snprintf(bundle_filename, sizeof(bundle_filename),
+                                               "p12/tile/L%02d/R%04xC%04x.bundle",
+                                               tile.coordinate.level, tile_file_row, tile_file_col);
+            assert(filename_size == 30);
+            const U32 file_index = FileIndexFromFileName(vtpk_file->archive, bundle_filename);
+            const U64 file_size = UncompressedFileSize(vtpk_file->archive, file_index);
+
+            U8 *file_content = shget(bundle_files_map, &bundle_filename);
+            if (file_content == NULL) {
+                clock_t tile_parse_start, tile_parse_end;
+                double tile_parse_cpu_time_seconds;
+
+                tile_parse_start = clock();
+                file_content = arena_alloc(scratch.arena, file_size);
+                if (!mz_zip_reader_extract_to_mem(vtpk_file->archive, file_index, file_content,
+                                                  file_size, 0)) {
+                    ERROR_MSG("can not open zip archive: '%s'\n",
+                              mz_zip_get_error_string(vtpk_file->archive->m_last_error));
+                }
+                tile_parse_end = clock();
+                tile_parse_cpu_time_seconds =
+                    ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
+                fprintf(stdout, "EXTRACTING FILE FOR TILE: c: %d, r: %d, l: %d: %f MS\n",
+                        tile.coordinate.col, tile.coordinate.row, tile.coordinate.level,
+                        Thousand(tile_parse_cpu_time_seconds));
+                shput(bundle_files_map, &bundle_filename, file_content);
             }
-            tile_parse_end = clock();
-            tile_parse_cpu_time_seconds =
-                ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
-            fprintf(stdout, "EXTRACTING FILE FOR TILE: c: %d, r: %d, l: %d: %f MS\n",
-                    tile->coordinate.col, tile->coordinate.row, tile->coordinate.level,
-                    Thousand(tile_parse_cpu_time_seconds));
-            shput(bundle_files_map, &bundle_filename, file_content);
-        }
-        const TileBundleFileHeader *header = (TileBundleFileHeader *)file_content;
-        assert(header->version == 3);
-        // assert(header->record_count == 16384);TODO: figure out why this is wrong
-        // assert(header->max_tile_size == 0);
-        assert(header->offset_byte_count == 5);
-        assert(header->slack_space == 0);
-        // assert(header->file_size == 0);
-        assert(header->user_header_offset == 40);
-        assert(header->user_header_size == 20 + 131072);
-        assert(header->legacy1 == 3);
-        // assert(header->legacy2 == 16);
-        assert(header->legacy3 == 16384);
-        assert(header->legacy4 == 5);
-        assert(header->index_size == 131072);
 
-        // decompress (unsually gzip compressed) individual tile
-        const TileIndexRecord compressed_mvt = TileIndexRecordFromIndex(
-            header->tile_index[tile->coordinate.row % 128][tile->coordinate.col % 128]);
+            const TileBundleFileHeader *header = (TileBundleFileHeader *)file_content;
+            assert(header->version == 3);
+            // assert(header->record_count == 16384);TODO: figure out why this is wrong
+            // assert(header->max_tile_size == 0);
+            assert(header->offset_byte_count == 5);
+            assert(header->slack_space == 0);
+            // assert(header->file_size == 0);
+            assert(header->user_header_offset == 40);
+            assert(header->user_header_size == 20 + 131072);
+            assert(header->legacy1 == 3);
+            // assert(header->legacy2 == 16);
+            assert(header->legacy3 == 16384);
+            assert(header->legacy4 == 5);
+            assert(header->index_size == 131072);
 
-        const U8 *uncompressed_tile_size_location =
-            file_content + compressed_mvt.tile_offset + compressed_mvt.tile_size - 4;
-        // read 4 bytes (maybe unaligned)
-        U32 uncompressed_tile_size;
-        memcpy(&uncompressed_tile_size, uncompressed_tile_size_location, sizeof(U32));
-        const MVT_ProtobufData mvt_protobuf =
-            (MVT_ProtobufData){.v = arena_alloc(scratch.arena, uncompressed_tile_size),
-                               .size = uncompressed_tile_size};
+            // decompress (unsually gzip compressed) individual tile
+            const TileIndexRecord compressed_mvt = TileIndexRecordFromIndex(
+                header->tile_index[tile.coordinate.row % 128][tile.coordinate.col % 128]);
 
-        mz_stream stream = {0};
-        stream.next_in = file_content + compressed_mvt.tile_offset;
-        stream.avail_in = compressed_mvt.tile_size;
-        stream.next_out = mvt_protobuf.v;
-        stream.avail_out = uncompressed_tile_size;
+            const U8 *uncompressed_tile_size_location =
+                file_content + compressed_mvt.tile_offset + compressed_mvt.tile_size - 4;
+            // read 4 bytes (maybe unaligned)
+            U32 uncompressed_tile_size;
+            memcpy(&uncompressed_tile_size, uncompressed_tile_size_location, sizeof(U32));
+            const MVT_ProtobufData mvt_protobuf =
+                (MVT_ProtobufData){.v = arena_alloc(scratch.arena, uncompressed_tile_size),
+                                   .size = uncompressed_tile_size};
 
-        int err = mz_inflateInit2(&stream, -15);
-        if (err == MZ_OK) {
-            err = mz_inflate(&stream, MZ_FINISH);
-            mz_inflateEnd(&stream);
-            // mz_inflate with MZ_FINISH returns MZ_STREAM_END on successful completion
-            if (err == MZ_STREAM_END) {
-                err = MZ_OK;
+            mz_stream stream = {0};
+            stream.next_in = file_content + compressed_mvt.tile_offset;
+            stream.avail_in = compressed_mvt.tile_size;
+            stream.next_out = mvt_protobuf.v;
+            stream.avail_out = uncompressed_tile_size;
+
+            int err = mz_inflateInit2(&stream, -15);
+            if (err == MZ_OK) {
+                err = mz_inflate(&stream, MZ_FINISH);
+                mz_inflateEnd(&stream);
+                // mz_inflate with MZ_FINISH returns MZ_STREAM_END on successful completion
+                if (err == MZ_STREAM_END) {
+                    err = MZ_OK;
+                }
+            }
+            if (!(err == MZ_OK)) {
+                ERROR_MSG("%s\n", mz_error(err));
+            }
+            assert(err == MZ_OK);
+            decompress_end = clock();
+            decompress_cpu_time_seconds =
+                ((double)(decompress_end - decompress_start)) / CLOCKS_PER_SEC;
+            fprintf(stdout, "DECOMPRESSING TILE: c: %d, r: %d, l: %d: %f MS\n", tile.coordinate.col,
+                    tile.coordinate.row, tile.coordinate.level,
+                    Thousand(decompress_cpu_time_seconds));
+
+            {
+                // PARSE TILE INTO GPU DATA
+                clock_t tile_parse_start, tile_parse_end;
+                double tile_parse_cpu_time_seconds;
+
+                tile_parse_start = clock();
+                // work done here
+                // ------------------------------------------------------------------
+                GPU_DataFromMapboxVectorTile(&gpu_buffer, tile.coordinate, mvt_protobuf,
+                                             vtpk_file->layer_styles);
+                // ------------------------------------------------------------------
+                tile_parse_end = clock();
+                tile_parse_cpu_time_seconds =
+                    ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
+                fprintf(stdout, "PARSING TILE: c: %d, r: %d, l: %d: %f MS\n", tile.coordinate.col,
+                        tile.coordinate.row, tile.coordinate.level,
+                        Thousand(tile_parse_cpu_time_seconds));
             }
         }
-        if (!(err == MZ_OK)) {
-            ERROR_MSG("%s\n", mz_error(err));
-        }
-        assert(err == MZ_OK);
-        decompress_end = clock();
-        decompress_cpu_time_seconds =
-            ((double)(decompress_end - decompress_start)) / CLOCKS_PER_SEC;
-        fprintf(stdout, "DECOMPRESSING TILE: c: %d, r: %d, l: %d: %f MS\n", tile->coordinate.col,
-                tile->coordinate.row, tile->coordinate.level,
-                Thousand(decompress_cpu_time_seconds));
 
-        {
-            // PARSE TILE INTO GPU DATA
-            clock_t tile_parse_start, tile_parse_end;
-            double tile_parse_cpu_time_seconds;
-
-            tile_parse_start = clock();
-            // work done here
-            // ------------------------------------------------------------------
-            tile->gpu_data =
-                ParseMapboxVectorTile(tile->coordinate, mvt_protobuf, file->layer_styles);
-            // ------------------------------------------------------------------
-            tile_parse_end = clock();
-            tile_parse_cpu_time_seconds =
-                ((double)(tile_parse_end - tile_parse_start)) / CLOCKS_PER_SEC;
-            fprintf(stdout, "PARSING TILE: c: %d, r: %d, l: %d: %f MS\n", tile->coordinate.col,
-                    tile->coordinate.row, tile->coordinate.level,
-                    Thousand(tile_parse_cpu_time_seconds));
-        }
-        assert(IsRenderTextureValid(tile->gpu_data.texture));
-        UploadMesh(&tile->gpu_data.mesh, false);
-
-        tile->status = DATA_PRESENT;
+        // upload mesh and add handle to valid handles
+        assert(IsRenderTextureValid(gpu_buffer.texture));
+        UploadMesh(&gpu_buffer.mesh, false);
+        tile.gpu_data = gpu_buffer;
+        VectorTileHandleArrayPush(tile_handles, tile);
     }
+    // free hashmap
     shfree(bundle_files_map);
     temp_arena_memory_end(scratch);
 }

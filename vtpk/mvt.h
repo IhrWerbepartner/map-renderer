@@ -15,8 +15,8 @@
 // ------------------------  LIMITS  ------------------------
 #define MVT_TEXTURE_SIZE (512 * 4)
 #define MVT_MESH_SIZE (512 * 4)
-#define LAYER_KEYS_MAX (100)
-#define LAYER_VALUES_MAX (100)
+#define LAYER_KEYS_MAX (500)
+#define LAYER_VALUES_MAX (500)
 #define LAYER_FEATURES_MAX (100000)
 
 // ------------------------  STATIC DATA  ---------------------
@@ -624,7 +624,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
 
 // Draw all vector data to the specified render texture.
 // The corresponding styles are taken from the styles map provided.
-static void TileTextureFromVectorData(const VT_VectorData *data, const VT_StyleMap *styles,
+static void TileTextureFromVectorData(const VT_VectorData *data, VT_StyleMap *styles,
                                       const RenderTexture2D *texture) {
     // TODO: apply styling
     BeginTextureMode(*texture);
@@ -742,7 +742,7 @@ static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
     // Furthermore we need to set the color for each vertex.
     assert(triangles.count > 0);
     const S32 vertex_soup_count = triangles.count * 3;
-    const Mesh mesh = {
+    const Mesh mesh = (Mesh){
         // x, y, z coords per vertex
         .vertices = arena_alloc_array(&vector_data_arena, float, (size_t)vertex_soup_count * 3),
         .vertexCount = vertex_soup_count,
@@ -796,6 +796,17 @@ static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
     return mesh;
 }
 
+static Mesh MeshFromVectorData(const VT_VectorData *vector_data) {
+    return (Mesh){
+        // x, y, z coords per vertex
+        .vertices = vector_data->vertex_soup,
+        .vertexCount = vector_data->vertex_count,
+        .triangleCount = vector_data->triangle_count,
+        // RGBA = 4 bytes per color
+        .colors = vector_data->triangle_colors,
+    };
+}
+
 // creates a new tile with very conservative size estimates
 static VT_TileGeometry *CreateNewTile(Arena *arena, S32 tile_size) {
     VT_TileGeometry *tile = arena_alloc(arena, sizeof(VT_TileGeometry));
@@ -816,31 +827,19 @@ static VT_TileGeometry *CreateNewTile(Arena *arena, S32 tile_size) {
     return tile;
 }
 
-// parse a MVT and store it as a mesh/texture on the arena given.
+// parse a MVT and store it as a mesh/texture on the local cache.
 // It computes the following:
 // - 1 Texture
-// - int(layer count in MVT) Meshes
-static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
-                                                MVT_ProtobufData data, VT_StyleMap *style_map) {
+// - 1 Mesh
+// - caches the mesh/texture on a { tile_coordinate -> vector_data } map.
+static void GPU_DataFromMapboxVectorTile(VectorTileGPU_Data *gpu_data,
+                                         VT_Coordinate tile_coordinate, MVT_ProtobufData data,
+                                         VT_StyleMap *style_map) {
 
-    // check if we already have parsed this tile
-    const S64 tile_data_index = hmgeti(vector_data_map, tile_coordinate);
-    if (tile_data_index != -1) {
-        const VT_VectorData vector_data = vector_data_map[tile_data_index].value;
-
-        // render to texture
-        const RenderTexture2D texture = LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
-        TileTextureFromVectorData(&vector_data, style_map, &texture);
-
-        const Mesh tile_mesh = (Mesh){
-            // x, y, z coords per vertex
-            .vertices = vector_data.vertex_soup,
-            .vertexCount = vector_data.vertex_count,
-            .triangleCount = vector_data.triangle_count,
-            // RGBA = 4 bytes per color
-            .colors = vector_data.triangle_colors,
-        };
-        return (VectorTileGPU_Data){tile_mesh, texture};
+    // check if we already have parsed this tile, this should not happen
+    {
+        const S64 tile_data_index = hmgeti(vector_data_map, tile_coordinate);
+        assert(tile_data_index == -1);
     }
 
     Temp_Arena_Memory scratch = GetScratch();
@@ -961,7 +960,6 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
                                 tile_geometry->mutli_point_style_indices);
 
     // render to texture
-    const RenderTexture2D texture = LoadRenderTexture(MVT_TEXTURE_SIZE, MVT_TEXTURE_SIZE);
     {
         clock_t tile_parse_start, tile_parse_end;
         double tile_parse_cpu_time_seconds;
@@ -969,7 +967,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
         tile_parse_start = clock();
         // work done here
         // ------------------------------------------------------------------
-        TileTextureFromVectorData(&vector_data, style_map, &texture);
+        TileTextureFromVectorData(&vector_data, style_map, &gpu_data->texture);
         // ------------------------------------------------------------------
         tile_parse_end = clock();
         tile_parse_cpu_time_seconds =
@@ -980,7 +978,6 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
     }
 
     // generate mesh
-    Mesh tile_mesh;
     {
         clock_t tile_parse_start, tile_parse_end;
         double tile_parse_cpu_time_seconds;
@@ -988,7 +985,7 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
         tile_parse_start = clock();
         // work done here
         // ------------------------------------------------------------------
-        tile_mesh = MeshFromPolygonGeometry(&vector_data, tile_geometry, style_map);
+        gpu_data->mesh = MeshFromPolygonGeometry(&vector_data, tile_geometry, style_map);
         // ------------------------------------------------------------------
         tile_parse_end = clock();
         tile_parse_cpu_time_seconds =
@@ -999,9 +996,8 @@ static VectorTileGPU_Data ParseMapboxVectorTile(VT_Coordinate tile_coordinate,
                 Thousand(tile_parse_cpu_time_seconds));
     }
 
-    // cache vector data for quick redraw
+    // cache vector data for faster redraw
     hmput(vector_data_map, tile_coordinate, vector_data);
 
     temp_arena_memory_end(scratch);
-    return (VectorTileGPU_Data){tile_mesh, texture};
 }

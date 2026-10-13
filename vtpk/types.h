@@ -21,27 +21,19 @@ struct VT_Coordinate {
     S32 row, col, level;
 };
 
-typedef enum VectorTileHandleStatus VectorTileHandleStatus;
-enum VectorTileHandleStatus {
-    DATA_INVALID = 0, // model data was never queried and therefore is not valid
-    DATA_PRESENT = 1, // model data is present
-    DATA_EVICTED = 2, // model data was present but was evicted from the cache
-                      // and is now invalid
-};
-
 typedef struct VectorTileGPU_Data VectorTileGPU_Data;
 struct VectorTileGPU_Data {
     Mesh mesh;
     RenderTexture2D texture;
 };
+DeclFixedArray(VectorTileGPU_DataArray, VectorTileGPU_Data);
 
 // handle into cache for triangualted tiles
 typedef struct VectorTileHandle VectorTileHandle;
 struct VectorTileHandle {
     VT_Coordinate coordinate;
-    VectorTileGPU_Data gpu_data;
     S32 quad_tree_node;
-    VectorTileHandleStatus status;
+    VectorTileGPU_Data gpu_data;
 };
 DeclFixedArray(VectorTileHandleArray, VectorTileHandle);
 
