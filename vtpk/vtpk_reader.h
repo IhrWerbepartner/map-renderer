@@ -158,11 +158,15 @@ static void RootPropertiesFromJson(Arena *arena, VtpkFile *vtpk_file) {
     {
         const JsonNode *min_LOD = JsonFindKey(root, String8FromCString("minLOD"));
         const JsonNode *max_LOD = JsonFindKey(root, String8FromCString("maxLOD"));
+        const JsonNode *maxzoom = JsonFindKey(root, String8FromCString("maxzoom"));
         assert(min_LOD->type == JSON_INTEGER);
         assert(max_LOD->type == JSON_INTEGER);
-        assert(min_LOD < max_LOD);
+        assert(maxzoom->type == JSON_INTEGER);
+        assert(min_LOD->num.u_value < max_LOD->num.u_value);
+        assert(min_LOD->num.u_value < maxzoom->num.u_value);
         vtpk_file->root_propreties.lod_min = safe_cast_u32(min_LOD->num.u_value);
         vtpk_file->root_propreties.lod_max = safe_cast_u32(max_LOD->num.u_value);
+        vtpk_file->root_propreties.maxzoom = safe_cast_u32(maxzoom->num.u_value);
     }
     temp_arena_memory_end(json_scratch);
     // TODO: figure out wich properties we actually need.
@@ -313,7 +317,8 @@ static void StyleFromJson(Arena *arena, VtpkFile *vtpk_file) {
             key.filter_value = filter_val->num.s_value;
         }
         U32 zoom_min = vtpk_file->root_propreties.lod_min;
-        U32 zoom_max = vtpk_file->root_propreties.lod_max;
+        // account for the fact that maxzoom in root.json is inclusive, maxzoom in styles.json not
+        U32 zoom_max = vtpk_file->root_propreties.maxzoom + 1;
         const JsonNode *zoom_node_min = JsonFindKey(layer_style, String8FromCString("minzoom"));
         if (zoom_node_min != &json_node_null) {
             if (zoom_node_min->type == JSON_INTEGER) {
@@ -552,6 +557,8 @@ static void VectorTileHandlesFromFile(VtpkFile *vtpk_file, const S32Slice missin
         }
 
         // upload mesh and add handle to valid handles
+        // TODO: figure out how to reuse existing OpenGL meshes and just update the vertex data with
+        // UpdateMeshBuffer() allthough i am not sure how to update the color information(?)
         assert(IsRenderTextureValid(gpu_buffer.texture));
         UploadMesh(&gpu_buffer.mesh, false);
         tile.gpu_data = gpu_buffer;

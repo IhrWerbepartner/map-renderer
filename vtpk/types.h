@@ -80,12 +80,14 @@ struct TileBundleFileHeader {
     U64 tile_index[128][128]; // bits 0..39 represent offset, 40..63 the size
                               // (bytes) of a tile
 };
+static_assert(sizeof(TileBundleFileHeader) == 131136, "type has wrong size");
 
 typedef struct VtpkFileRootProperties VtpkFileRootProperties;
 struct VtpkFileRootProperties {
     F64Array lod_resolutions;
     F64 tile_info_origin_x, tile_info_origin_y;
-    U32 lod_min, lod_max;
+    U32 lod_min, lod_max; // L{min}-L{max} .bundle dirs + files
+    U32 maxzoom;          // max logical zoom, vector data in lod_max .bundle file
     U32 tile_info_cols, tile_info_rows;
 };
 
