@@ -33,7 +33,7 @@ void StaticMemoryInit(void) {
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
         void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
-                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2MB, -1, 0);
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
         if (backing_buffer == MAP_FAILED) {
             ERROR_MSG("unable to map memory, errno: %d", errno);
         }
@@ -45,7 +45,7 @@ void StaticMemoryInit(void) {
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
         backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
-                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2MB, -1, 0);
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
         if (backing_buffer == MAP_FAILED) {
             ERROR_MSG("unable to map memory");
         }
@@ -61,7 +61,7 @@ void StaticMemoryInit(void) {
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
         void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
-                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_2MB, -1, 0);
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
         if (backing_buffer == MAP_FAILED) {
             ERROR_MSG("unable to map memory, errno: %d", errno);
         }
