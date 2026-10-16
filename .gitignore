@@ -13,6 +13,7 @@ samples/RhodeIsland.ldgeojson
 map-renderer
 map-renderer-release-stripped
 unoptimized-map-renderer
+map-renderer_profile
 stripped_map-renderer
 ressources/
 raylib_test/
