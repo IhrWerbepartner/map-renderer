@@ -31,8 +31,19 @@ struct VTPK_RenderOptions {
     bool show_textures;
 };
 
-#ifdef DEBUG
-static void PrintMissingTiles(S32Slice s, QuadTreeNodeArray quad_tree) {
+// #ifdef DEBUG
+static void PrintMissingCoordinates(const VT_CoordinateSlice s) {
+    fprintf(stderr, "[");
+    for (S32 i = 0; i < s.count; i += 1) {
+        if (i > 0) {
+            fprintf(stderr, ", ");
+        }
+        const VT_Coordinate coord = s.v[i];
+        fprintf(stderr, "(r: %d, c: %d, l: %d)", coord.row, coord.col, coord.level);
+    }
+    fprintf(stderr, "]\n");
+}
+static void PrintMissingTiles(const S32Slice s, QuadTreeNodeArray quad_tree) {
     fprintf(stderr, "[");
     for (S32 i = 0; i < s.count; i += 1) {
         if (i > 0) {
@@ -43,7 +54,7 @@ static void PrintMissingTiles(S32Slice s, QuadTreeNodeArray quad_tree) {
     }
     fprintf(stderr, "]\n");
 }
-#endif
+// #endif
 
 // initializes the gpu_buffers inside the draw cache
 static void InitDrawCache(DrawCache *draw_cache) {
@@ -57,30 +68,32 @@ static void InitDrawCache(DrawCache *draw_cache) {
 // the cache
 // TODO: make this not a trivial O(n^2) operation but something smarter like using a
 // hashset
-static S32Slice NonCachedTileIndices(Arena *arena, const S32Slice visible_tiles,
-                                     VectorTileHandleSlice cached_tiles) {
-    S32Array missing_tiles = S32ArrayNew(arena, visible_tiles.count);
-    for (S32 i = 0; i < visible_tiles.count; i += 1) {
+static VT_CoordinateSlice NonCachedTileIndices(Arena *arena,
+                                               const VT_CoordinateArray *visible_coordinates,
+                                               VectorTileHandleSlice cached_tiles) {
+    VT_CoordinateArray missing_coordinates =
+        VT_CoordinateArrayNew(arena, visible_coordinates->count);
+    for (S32 i = 0; i < visible_coordinates->count; i += 1) {
         bool found = false;
         for (S32 j = 0; j < cached_tiles.count; j += 1) {
-            if (visible_tiles.v[i] == cached_tiles.v[j].quad_tree_node) {
+            if (VT_CoordinateEq(visible_coordinates->d[i], cached_tiles.v[j].coordinate)) {
                 found = true;
                 break;
             }
         }
         if (!found) {
-            S32ArrayPush(&missing_tiles, visible_tiles.v[i]);
+            VT_CoordinateArrayPush(&missing_coordinates, visible_coordinates->d[i]);
         }
     }
-    return S32SliceFromArray(&missing_tiles);
+    return VT_CoordinateSliceFromArray(&missing_coordinates);
 }
 
 // copy tiles within AABB to back buffer and request missing ones fromt the
 // tilecache. finally swap back and front buffer.
 // furthemore take care that all GPU_Buffers/Handles remain the same set.
 // This ensures that we do not need to create new textures.
-static VectorTileHandleSlice MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache,
-                                                   S32 zoom_level) {
+static VectorTileHandleSlice TilesFromBoundingBox(VtpkFile *vtpk_file, DrawCache *draw_cache,
+                                                  S32 zoom_level) {
     assert(draw_cache->back_buffer.capacity == draw_cache->front_buffer.capacity);
     Temp_Arena_Memory scratch = GetScratch();
 
@@ -93,42 +106,50 @@ static VectorTileHandleSlice MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCach
         VectorTileGPU_DataArrayNew(scratch.arena, DRAW_CACHE_SIZE);
     const AABB bbox = vtpk_file->bounding_box;
     for (S32 i = 0; i < draw_cache->front_buffer.capacity; i += 1) {
-        const VectorTileHandle handle = draw_cache->front_buffer.d[i];
+        const VectorTileHandle tile = draw_cache->front_buffer.d[i];
         // just copy over the data
         if (i >= draw_cache->front_buffer.count) {
-            VectorTileGPU_DataArrayPush(&unused_gpu_buffers, handle.gpu_data);
+            VectorTileGPU_DataArrayPush(&unused_gpu_buffers, tile.gpu_data);
             continue;
         }
 
-        // this tile was visible before perform the actual test
-        if (handle.coordinate.level == zoom_level &&
-            AABBContains(bbox, vtpk_file->quad_tree.d[handle.quad_tree_node].tile.coordinate)) {
-            VectorTileHandleArrayPush(&draw_cache->back_buffer, handle);
+        // this tile was visible before, perform the actual test
+        if (tile.coordinate.level == zoom_level && AABBContains(bbox, tile.coordinate)) {
+            VectorTileHandleArrayPush(&draw_cache->back_buffer, tile);
         } else {
-            VectorTileGPU_DataArrayPush(&unused_gpu_buffers, handle.gpu_data);
+            VectorTileGPU_DataArrayPush(&unused_gpu_buffers, tile.gpu_data);
         }
     }
 
-    S32Array visible_tiles = S32ArrayNew(scratch.arena, DRAW_CACHE_SIZE);
+    const S32 quad_tree_zoom_level = ClampTop(zoom_level, vtpk_file->root_propreties.lod_max);
+    S32Array visible_tile_indices = S32ArrayNew(scratch.arena, DRAW_CACHE_SIZE);
     QuadTreeFind(QuadTreeNodeSliceFromArray(&vtpk_file->quad_tree), vtpk_file->root_node, bbox,
-                 zoom_level, &visible_tiles);
+                 quad_tree_zoom_level, &visible_tile_indices);
 #ifdef DEBUG
-    // fprintf(stderr, "visible_tiles: ");
-    // PrintMissingTiles(S32SliceFromArray(&visible_tiles), vtpk_file->quad_tree);
-#endif
-    // TODO: it would be cool to get these indices in a sorted order
-    // this makes intersecting them much cheaper.
-    // lets see if we can get this invariant enforced in the quad tree!!
-    const S32Slice missing_tile_indices =
-        NonCachedTileIndices(scratch.arena, S32SliceFromArray(&visible_tiles),
-                             VectorTileHandleSliceFromArray(&draw_cache->back_buffer));
-#ifdef DEBUG
-    // fprintf(stderr, "missing_tiles: ");
-    // PrintMissingTiles(missing_tile_indices, vtpk_file->quad_tree);
+    fprintf(stderr, "Visible tiles: ");
+    PrintMissingTiles(S32SliceFromArray(&visible_tile_indices), vtpk_file->quad_tree);
 #endif
 
-    VectorTileHandlesFromFile(vtpk_file, missing_tile_indices, &draw_cache->back_buffer,
-                              &unused_gpu_buffers);
+    VT_CoordinateArray visible_coordinates = VT_CoordinateArrayNew(scratch.arena, DRAW_CACHE_SIZE);
+    for (S32 i = 0; i < visible_tile_indices.count; i += 1) {
+        VT_Coordinate coord = vtpk_file->quad_tree.d[visible_tile_indices.d[i]].tile.coordinate;
+        VT_CoordinateArrayPush(&visible_coordinates,
+                               (VT_Coordinate){coord.row, coord.col, zoom_level});
+    }
+#ifdef DEBUG
+    fprintf(stderr, "Visible Coordinates: ");
+    PrintMissingCoordinates(VT_CoordinateSliceFromArray(&visible_coordinates));
+#endif
+
+    const VT_CoordinateSlice missing_coordinates =
+        NonCachedTileIndices(scratch.arena, &visible_coordinates,
+                             VectorTileHandleSliceFromArray(&draw_cache->back_buffer));
+#ifdef DEBUG
+    fprintf(stderr, "Missing Coordinates: ");
+    PrintMissingCoordinates(missing_coordinates);
+#endif
+    GPU_DataFromCoordinates(vtpk_file, missing_coordinates, &draw_cache->back_buffer,
+                            &unused_gpu_buffers);
 
     // copy over the rest of the gpu_buffers in the back of the array
     // this is to not loose any buffers
@@ -149,15 +170,23 @@ static VectorTileHandleSlice MeshesFromBoundingBox(VtpkFile *vtpk_file, DrawCach
 typedef struct TileCamera TileCamera;
 struct TileCamera {
     // Camera2D, defines position/orientation in 2d space
-    Vector2 offset; // Camera offset (screen space offset from window origin)
-    Vector2 target; // Camera target (world space target point that is mapped to screen
-                    // space offset)
-    float rotation; // Camera rotation in degrees (pivots around target)
-    float zoom;     // Camera zoom (scaling around target), must not be set to 0, set to 1.0f
-                    // for no scale
+    Vector2 offset;   // Camera offset (screen space offset from window origin)
+    Vector2 target;   // Camera target (world space target point that is mapped to screen
+                      // space offset)
+    float rotation;   // Camera rotation in degrees (pivots around target)
+    float zoom;       // Camera zoom (scaling around target), must not be set to 0, set to 1.0f
+                      // for no scale
+    S32 tile_lod_max; // the highest level of detail represented through the quad-tree.
+                      // All higher zooms have to be done by zooming in a "real" camera and
+                      // providing the correct level information to the tile reader.
 };
 static Camera2D Camera2DFromTileCamera(TileCamera camera) {
-    return (Camera2D){camera.offset, camera.target, camera.rotation, 1.f + fmodf(camera.zoom, 1.f)};
+    Camera2D c =
+        (Camera2D){camera.offset, camera.target, camera.rotation, 1.f + fmodf(camera.zoom, 1.f)};
+
+    // account for "overzooming" past the tile lod, therefore we need to zoom in the real camera.
+    c.zoom += ClampBot(0.f, floorf(camera.zoom) - (F32)camera.tile_lod_max);
+    return c;
 }
 
 // Initialize 2D mode with custom camera (2D)
@@ -167,7 +196,7 @@ static void BeginModeTile(TileCamera camera) {
     rlLoadIdentity(); // Reset current matrix (modelview)
 
     // Apply 2d camera transformation to modelview
-    Camera2D camera_2d = Camera2DFromTileCamera(camera);
+    const Camera2D camera_2d = Camera2DFromTileCamera(camera);
     // assert(camera_2d.zoom >= 5.f);
     // assert(camera_2d.zoom < 6.f);
     rlMultMatrixf(MatrixToFloat(GetCameraMatrix2D(camera_2d)));
@@ -176,7 +205,7 @@ static void BeginModeTile(TileCamera camera) {
 // End 2D mode with custom camera
 static void EndModeTile(void) { EndMode2D(); }
 
-static TileCamera ResetTileCamera(Screen screen) {
+static TileCamera ResetTileCamera(Screen screen, S32 tile_lod_max) {
     return (TileCamera){
         .zoom = 1.0f, // speicfies the zoom level. Is in the range (0; +infinity).
                       // the non integer part is used to interpolate between the tile sizes
@@ -185,12 +214,13 @@ static TileCamera ResetTileCamera(Screen screen) {
         .offset = (Vector2){(float)screen.width / 2.0f, (float)screen.height / 2.0f},
         .target.x = (F32)DRAW_TILE_PIXEL_COUNT / 2.f,
         .target.y = (F32)DRAW_TILE_PIXEL_COUNT / 2.f,
+        .tile_lod_max = tile_lod_max,
     };
 }
 
 static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
 
-    Camera2D camera_2d = Camera2DFromTileCamera(*tile_camera);
+    const Camera2D camera_2d = Camera2DFromTileCamera(*tile_camera);
 
     // Translate based on mouse right click
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
@@ -208,11 +238,11 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
         // if we cross a zoom boundary (from one level to another update position)
         const S32 zoom_level_old = (S32)tile_camera->zoom;
         const S32 zoom_level_new = (S32)(wheel_scaled + tile_camera->zoom);
-        if (zoom_level_old < zoom_level_new) {
+        if (zoom_level_old < zoom_level_new && zoom_level_new <= tile_camera->tile_lod_max) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 2.f);
             tile_camera->target =
                 Vector2Subtract(tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT});
-        } else if (zoom_level_old > zoom_level_new) {
+        } else if (zoom_level_old > zoom_level_new && zoom_level_new < tile_camera->tile_lod_max) {
             tile_camera->target = Vector2Scale(mouseWorldPos, 0.5f);
             tile_camera->target =
                 Vector2Add(tile_camera->target, (Vector2){0.f, (F32)DRAW_TILE_PIXEL_COUNT / 2.f});
@@ -231,7 +261,7 @@ static void UpdateTileCameraPos(TileCamera *tile_camera, Screen screen) {
 
     // Camera reset (zoom and rotation)
     if (IsKeyPressed(KEY_R)) {
-        *tile_camera = ResetTileCamera(screen);
+        *tile_camera = ResetTileCamera(screen, tile_camera->tile_lod_max);
     }
 }
 
@@ -307,11 +337,10 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
     VtpkFile *vtpk_file = VtpkParseFile(scratch.arena, filename);
     vtpk_file->bounding_box = (AABB){min_S32, min_S32, max_S32, max_S32};
 
-    TileCamera camera = ResetTileCamera(screen);
+    TileCamera camera = ResetTileCamera(screen, vtpk_file->root_propreties.lod_max);
 
     DrawCache draw_cache = (DrawCache){VectorTileHandleArrayNew(scratch.arena, DRAW_CACHE_SIZE),
-                                       VectorTileHandleArrayNew(scratch.arena, DRAW_CACHE_SIZE),
-                                       VectorTileGPU_DataArrayNew(scratch.arena, DRAW_CACHE_SIZE)};
+                                       VectorTileHandleArrayNew(scratch.arena, DRAW_CACHE_SIZE)};
     InitDrawCache(&draw_cache);
     Material material = LoadMaterialDefault();
     material.maps[MATERIAL_MAP_DIFFUSE].color = BLUE;
@@ -350,8 +379,8 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
         }
         {
             // DrawRectangle(0, 512, tile_size, tile_size, RED);
-            VectorTileHandleSlice tiles =
-                MeshesFromBoundingBox(vtpk_file, &draw_cache, ClampBot((S32)camera.zoom, 0));
+            const VectorTileHandleSlice tiles =
+                TilesFromBoundingBox(vtpk_file, &draw_cache, ClampBot((S32)camera.zoom, 0));
             for (S32 i = 0; i < tiles.count; i += 1) {
                 const VectorTileHandle tile = tiles.v[i];
                 if (render_options.show_meshes) {
@@ -361,7 +390,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     rlLoadIdentity();
                     rlMultMatrixf(MatrixToFloat(mesh_transform));
 
-                    material.maps[MATERIAL_MAP_DIFFUSE].color = RAYWHITE;
+                    material.maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
                     mesh_pos.x = mesh_transform.m12;
                     mesh_pos.y = mesh_transform.m13;
                     mesh_pos.z = mesh_transform.m14;
@@ -369,19 +398,19 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     DrawMesh(tile.gpu_data.mesh, material,
                              MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
                     if (render_options.show_bounding_box) {
-                        BoundingBox bbox = GetMeshBoundingBox(tile.gpu_data.mesh);
+                        const BoundingBox bbox = GetMeshBoundingBox(tile.gpu_data.mesh);
                         DrawRectangleLines((S32)bbox.min.x, (S32)bbox.min.y,
                                            (S32)(bbox.max.x - bbox.min.x),
                                            (S32)(bbox.max.y - bbox.min.y), GREEN);
                         DrawTextEx(GetFontDefault(),
                                    TextFormat("[ROW: %d COL: %d LVL: %d]", tile.coordinate.row,
                                               tile.coordinate.col, tile.coordinate.level),
-                                   (Vector2){bbox.min.x + 10, bbox.min.y + 10}, 10, 1, RED);
-                        Vector2 screen_pos_min = GetWorldToScreen2D(
+                                   (Vector2){bbox.min.x + 10, bbox.min.y + 10}, 100, 1, RED);
+                        const Vector2 screen_pos_min = GetWorldToScreen2D(
                             (Vector2){bbox.min.x, bbox.min.y}, Camera2DFromTileCamera(camera));
                         TraceLog(LOG_INFO, "bbox min screen coords: [%f, %f]", screen_pos_min.x,
                                  screen_pos_min.y);
-                        Vector2 screen_pos_max = GetWorldToScreen2D(
+                        const Vector2 screen_pos_max = GetWorldToScreen2D(
                             (Vector2){bbox.max.x, bbox.max.y}, Camera2DFromTileCamera(camera));
                         TraceLog(LOG_INFO, "bbox max screen coords: [%f, %f]", screen_pos_max.x,
                                  screen_pos_max.y);

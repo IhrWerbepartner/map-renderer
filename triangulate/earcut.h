@@ -16,10 +16,10 @@ struct EarcutPolygon {
 
 typedef struct ZOrderInfo ZOrderInfo;
 struct ZOrderInfo {
-    bool hashing; // if false we do no hashing and the other fields are irrelevant
     F64 minX, maxX;
     F64 minY, maxY;
     F64 inv_size;
+    bool hashing; // if false we do no hashing and the other fields are irrelevant
 };
 
 typedef struct Node Node;

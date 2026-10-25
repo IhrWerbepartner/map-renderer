@@ -137,8 +137,7 @@ static Coord2 Coord2FromJsonArrayNode(const JsonNode *coordinates) {
         ERROR_MSG("invalid coordinate type for Point supplied")
     }
     if (coordinates->children.count != 2) {
-        ERROR_MSG("Map rendrer only suppords 2D coords: was %d\n",
-                  coordinates->children.count)
+        ERROR_MSG("Map rendrer only suppords 2D coords: was %d\n", coordinates->children.count)
     }
     F64 x;
     F64 y;
@@ -180,8 +179,7 @@ static S32 ContourFromJsonArray(const JsonNode *coordinates, Coord2Array *result
         const Coord2 coordinate = Coord2FromJsonArrayNode(point_coords);
         Coord2ArrayPush(result_array, coordinate);
         if (coordinate.y < min_coordinate.y ||
-            (FP_EQUAL(coordinate.y, min_coordinate.y) &&
-             coordinate.x > min_coordinate.x)) {
+            (FP_EQUAL(coordinate.y, min_coordinate.y) && coordinate.x > min_coordinate.x)) {
             min_index = index;
             min_coordinate = coordinate;
         }
@@ -189,8 +187,7 @@ static S32 ContourFromJsonArray(const JsonNode *coordinates, Coord2Array *result
         point_coords = point_coords->next;
     }
     ASSERT(min_index >= 0 && min_index < coordinates->children.count,
-           "Min index %d out of range (%d..%d)", min_index, 0,
-           coordinates->children.count)
+           "Min index %d out of range (%d..%d)", min_index, 0, coordinates->children.count)
     return min_index;
 }
 
@@ -216,8 +213,7 @@ static bool MakeCoordinatesCounterClockwise(Coord2Slice coordinates, S32 min_ind
 // identical to the last. input: [a, b, c, d, e] returns [e, d, c, b]
 // this procedure is used to turn a reversee the clockwise direction of a
 // contour
-void ContourFromJsonArrayReversed(const JsonNode *coordinates,
-                                  Coord2Array *result_array) {
+void ContourFromJsonArrayReversed(const JsonNode *coordinates, Coord2Array *result_array) {
     if (coordinates->type != JSON_ARRAY) {
         ERROR_MSG("invalid coordinates node type")
     }
@@ -231,8 +227,7 @@ void ContourFromJsonArrayReversed(const JsonNode *coordinates,
     }
 }
 
-static void Coord2ArrayFromJsonArray(const JsonNode *coordinates,
-                                     Coord2Array *result_array) {
+static void Coord2ArrayFromJsonArray(const JsonNode *coordinates, Coord2Array *result_array) {
 
     if (coordinates->type != JSON_ARRAY) {
         ERROR_MSG("invalid coordinates node type")
@@ -249,8 +244,8 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
     if (root->type != JSON_OBJECT) {
         ERROR_MSG("invalid object")
     }
-    JsonNode *const featureCollectionType = JsonFindKeyValue(
-        root, String8FromCString("type"), String8FromCString("FeatureCollection"));
+    JsonNode *const featureCollectionType =
+        JsonFindKeyValue(root, String8FromCString("type"), String8FromCString("FeatureCollection"));
     if (featureCollectionType == &json_node_null) {
         ERROR_MSG("invalid geojson type")
     }
@@ -265,14 +260,13 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
     // parse all "Features" in their appropriate arrays
     Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
     while (current_child != &json_node_null) {
-        JsonNode *const feature_type = JsonFindKeyValue(
-            current_child, String8FromCString("type"), String8FromCString("Feature"));
+        JsonNode *const feature_type = JsonFindKeyValue(current_child, String8FromCString("type"),
+                                                        String8FromCString("Feature"));
         if (feature_type == &json_node_null) {
             ERROR_MSG("invalid feature type")
         }
 
-        JsonNode *const geometry =
-            JsonFindKey(current_child, String8FromCString("geometry"));
+        JsonNode *const geometry = JsonFindKey(current_child, String8FromCString("geometry"));
         if (geometry == &json_node_null || geometry->type != JSON_OBJECT) {
             ERROR_MSG("invalid or no geometry supplied")
         }
@@ -282,8 +276,7 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             ERROR_MSG("no geometry type supplied")
         }
 
-        JsonNode *const coordinates =
-            JsonFindKey(geometry, String8FromCString("coordinates"));
+        JsonNode *const coordinates = JsonFindKey(geometry, String8FromCString("coordinates"));
         if (coordinates == &json_node_null || coordinates->type != JSON_ARRAY) {
             ERROR_MSG("no coordinates supplied")
         }
@@ -318,8 +311,7 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             LineStringArrayPush(&render_data->line_strings, line_string);
         }
 
-        if (String8Equals(geometry_type->text_value,
-                          String8FromCString("MultiLineString"))) {
+        if (String8Equals(geometry_type->text_value, String8FromCString("MultiLineString"))) {
             JsonNode *line_string = coordinates->children.first;
             MultiLineString mls = (MultiLineString){
                 .lines = (Slice){.min = render_data->multi_line_string_array.count,
@@ -327,12 +319,10 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             };
             while (line_string != &json_node_null) {
                 LineString ls = (LineString){
-                    .coordinates =
-                        (Slice){.min = render_data->multi_line_string_coords.count,
-                                .count = line_string->children.count},
+                    .coordinates = (Slice){.min = render_data->multi_line_string_coords.count,
+                                           .count = line_string->children.count},
                 };
-                Coord2ArrayFromJsonArray(line_string,
-                                         &render_data->multi_line_string_coords);
+                Coord2ArrayFromJsonArray(line_string, &render_data->multi_line_string_coords);
                 ASSERT(ls.coordinates.min + ls.coordinates.count ==
                            render_data->multi_line_string_coords.count,
                        "assert failed at line: %d", __LINE__)
@@ -345,8 +335,7 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
         if (String8Equals(geometry_type->text_value, String8FromCString("Polygon"))) {
             S32 contour_count = coordinates->children.count;
             S32Array contour_sizes = S32ArrayNew(scratch.arena, contour_count);
-            Coord2 *vertices =
-                &render_data->polygon_coords.d[render_data->polygon_coords.count];
+            Coord2 *vertices = &render_data->polygon_coords.d[render_data->polygon_coords.count];
             S32 first_coordinate_idx = render_data->polygon_coords.count;
             S32 first_triangle_idx = render_data->polygon_triangles.count;
 
@@ -355,39 +344,35 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             Coord2ArrayPush(&render_data->polygon_coords, (Coord2){0.f, 0.f});
             JsonNode *contour_array = coordinates->children.first;
             if (contour_array == &json_node_null || contour_array->children.count <= 1) {
-                ERROR_MSG("invalid size for polygon contour: %d",
-                          contour_array->children.count)
+                ERROR_MSG("invalid size for polygon contour: %d", contour_array->children.count)
             }
             const S32 min_coordinate_index =
                 ContourFromJsonArray(contour_array, &render_data->polygon_coords);
             S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
             bool outerContourIsClockwise = MakeCoordinatesCounterClockwise(
-                Coord2SliceFromArrayExt(&render_data->polygon_coords,
-                                        first_coordinate_idx + 1,
+                Coord2SliceFromArrayExt(&render_data->polygon_coords, first_coordinate_idx + 1,
                                         contour_array->children.count - 1),
                 min_coordinate_index);
             contour_array = contour_array->next;
             while (contour_array != &json_node_null) {
                 S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
                 if (outerContourIsClockwise) {
-                    ContourFromJsonArrayReversed(contour_array,
-                                                 &render_data->polygon_coords);
+                    ContourFromJsonArrayReversed(contour_array, &render_data->polygon_coords);
                 } else {
                     ContourFromJsonArray(contour_array, &render_data->polygon_coords);
                 }
                 contour_array = contour_array->next;
             }
 
-            TessalatePolygon(&render_data->polygon_triangles,
-                             (Coord2Slice){.v = vertices,
-                                           .count = render_data->polygon_coords.count -
-                                                    first_coordinate_idx},
-                             S32SliceFromArray(&contour_sizes));
+            TessalatePolygon(
+                &render_data->polygon_triangles,
+                (Coord2Slice){.v = vertices,
+                              .count = render_data->polygon_coords.count - first_coordinate_idx},
+                S32SliceFromArray(&contour_sizes));
 #else
             JsonNode *contour_array = coordinates->children.first;
             if (contour_array == &json_node_null || contour_array->children.count <= 1) {
-                ERROR_MSG("invalid size for polygon contour: %d",
-                          contour_array->children.count)
+                ERROR_MSG("invalid size for polygon contour: %d", contour_array->children.count)
             }
             ContourFromJsonArray(contour_array, &render_data->polygon_coords);
             S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
@@ -399,16 +384,14 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
             }
             Earcut(&render_data->polygon_triangles,
                    (Coord2Slice){.v = vertices,
-                                 .count = render_data->polygon_coords.count -
-                                          first_coordinate_idx},
+                                 .count = render_data->polygon_coords.count - first_coordinate_idx},
                    S32SliceFromArray(&contour_sizes));
 
 #endif
 
             // we need to fix the indices as they are local to a polygon, but they
             // now point into the global coordinate array.
-            for (S32 j = first_triangle_idx; j < render_data->polygon_triangles.count;
-                 j++) {
+            for (S32 j = first_triangle_idx; j < render_data->polygon_triangles.count; j++) {
                 Triangle *triangle = &render_data->polygon_triangles.d[j];
                 triangle->a += first_coordinate_idx;
                 triangle->b += first_coordinate_idx;
@@ -423,19 +406,16 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
 #if SEIDEL_TRIANGULATION
             for (S32 i = 0; i < render_data->polygon_triangles.count; i += 1) {
                 Triangle t = render_data->polygon_triangles.d[i];
-                ASSERT(CROSS(render_data->polygon_coords.d[t.a],
-                             render_data->polygon_coords.d[t.b],
+                ASSERT(CROSS(render_data->polygon_coords.d[t.a], render_data->polygon_coords.d[t.b],
                              render_data->polygon_coords.d[t.c]) >= 0,
                        "Triangle [%d, %d, %d] not counter-clockwise\n", t.a, t.b, t.c)
             }
 #endif
         }
 
-        if (String8Equals(geometry_type->text_value,
-                          String8FromCString("MultiPolygon"))) {
+        if (String8Equals(geometry_type->text_value, String8FromCString("MultiPolygon"))) {
             JsonNode *polygon = coordinates->children.first;
-            ASSERT(polygon->type == JSON_ARRAY,
-                   "expected array for MultiPolygon coordinates\n")
+            ASSERT(polygon->type == JSON_ARRAY, "expected array for MultiPolygon coordinates\n")
 
             while (polygon != &json_node_null) {
                 S32 contour_count = polygon->children.count;
@@ -453,32 +433,28 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                     ContourFromJsonArray(contour_array, &render_data->polygon_coords);
                 S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
                 bool outerContourIsClockwise = MakeCoordinatesCounterClockwise(
-                    Coord2SliceFromArrayExt(&render_data->polygon_coords,
-                                            first_coordinate_idx + 1,
+                    Coord2SliceFromArrayExt(&render_data->polygon_coords, first_coordinate_idx + 1,
                                             contour_array->children.count - 1),
                     min_coordinate_index);
                 // DEBUG_MSG("min vertex: %d\n", min_coordinate_index + 1);
                 contour_array = contour_array->next;
                 while (contour_array != &json_node_null) {
                     ASSERT(contour_array->children.count > 1,
-                           "invalid size for polygon contour: %d",
-                           contour_array->children.count)
+                           "invalid size for polygon contour: %d", contour_array->children.count)
                     S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
                     if (outerContourIsClockwise) {
-                        ContourFromJsonArrayReversed(contour_array,
-                                                     &render_data->polygon_coords);
+                        ContourFromJsonArrayReversed(contour_array, &render_data->polygon_coords);
                     } else {
                         ContourFromJsonArray(contour_array, &render_data->polygon_coords);
                     }
                     contour_array = contour_array->next;
                 }
 
-                TessalatePolygon(
-                    &render_data->polygon_triangles,
-                    (Coord2Slice){.v = vertices,
-                                  .count = render_data->polygon_coords.count -
-                                           first_coordinate_idx},
-                    S32SliceFromArray(&contour_sizes));
+                TessalatePolygon(&render_data->polygon_triangles,
+                                 (Coord2Slice){.v = vertices,
+                                               .count = render_data->polygon_coords.count -
+                                                        first_coordinate_idx},
+                                 S32SliceFromArray(&contour_sizes));
 #else
                 JsonNode *contour_array = polygon->children.first;
                 ContourFromJsonArray(contour_array, &render_data->polygon_coords);
@@ -487,24 +463,22 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                 contour_array = contour_array->next;
                 while (contour_array != &json_node_null) {
                     ASSERT(contour_array->children.count > 1,
-                           "invalid size for polygon contour: %d",
-                           contour_array->children.count)
+                           "invalid size for polygon contour: %d", contour_array->children.count)
                     S32ArrayPush(&contour_sizes, contour_array->children.count - 1);
                     ContourFromJsonArray(contour_array, &render_data->polygon_coords);
                     contour_array = contour_array->next;
                 }
                 Earcut(&render_data->polygon_triangles,
                        (Coord2Slice){.v = vertices,
-                                     .count = render_data->polygon_coords.count -
-                                              first_coordinate_idx},
+                                     .count =
+                                         render_data->polygon_coords.count - first_coordinate_idx},
                        S32SliceFromArray(&contour_sizes));
 
 #endif
 
                 // we need to fix the indices as they are local to a polygon, but they
                 // now point into the global coordinate array.
-                for (S32 j = first_triangle_idx; j < render_data->polygon_triangles.count;
-                     j++) {
+                for (S32 j = first_triangle_idx; j < render_data->polygon_triangles.count; j++) {
                     Triangle *triangle = &render_data->polygon_triangles.d[j];
                     triangle->a += first_coordinate_idx;
                     triangle->b += first_coordinate_idx;
@@ -513,20 +487,17 @@ static GeoJson *serialize(Arena *arena, JsonNode *root) {
                                triangle->a < render_data->polygon_coords.count,
                            "multi polygon index for a out of range, should be inside "
                            "(%d-%d), was: %d",
-                           first_coordinate_idx, render_data->polygon_coords.count,
-                           triangle->a);
+                           first_coordinate_idx, render_data->polygon_coords.count, triangle->a);
                     ASSERT(triangle->b >= first_coordinate_idx &&
                                triangle->b < render_data->polygon_coords.count,
                            "multi polygon index for b out of range, should be inside "
                            "(%d-%d), was: %d",
-                           first_coordinate_idx, render_data->polygon_coords.count,
-                           triangle->b);
+                           first_coordinate_idx, render_data->polygon_coords.count, triangle->b);
                     ASSERT(triangle->c >= first_coordinate_idx &&
                                triangle->c < render_data->polygon_coords.count,
                            "multi polygon index for c out of range, should be inside "
                            "(%d-%d), was: %d",
-                           first_coordinate_idx, render_data->polygon_coords.count,
-                           triangle->c);
+                           first_coordinate_idx, render_data->polygon_coords.count, triangle->c);
                 }
                 polygon = polygon->next;
             }
@@ -547,11 +518,11 @@ static GeoJson *geo_json_parse(Arena *arena, char *filepath) {
 
     Temp_Arena_Memory scratch = GetScratchConflict(&arena, 1);
     fseek(f, 0, SEEK_END);
-    size_t fsize = (size_t)ftell(f);
+    const S64 fsize = ftell(f);
     fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
     char *file_content = arena_alloc(scratch.arena, fsize + 1);
-    fread(file_content, fsize, 1, f);
+    fread(file_content, (size_t)fsize, 1, f);
     fclose(f);
 
     JsonNode *root = JsonNodeFromString(arena, file_content);
@@ -579,8 +550,7 @@ static void draw_multi_points(const GeoJson *coords, Camera2D camera) {
         const S32 start_index = points.d[i].coordinates.min;
         const S32 length = points.d[i].coordinates.count;
         for (S32 j = 0; j < length; j++) {
-            Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(m_coords.d[start_index + j]),
-                                           camera);
+            Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(m_coords.d[start_index + j]), camera);
             DrawCircleV(a, 5.0f, RED);
             // DEBUG("drawing: [%03.05f, %03.05f]\n", a.x, a.y)
         }
@@ -595,10 +565,9 @@ static void draw_line_strings(const GeoJson *coords, Camera2D camera,
         const S32 start_index = lines.d[i].coordinates.min;
         const S32 length = lines.d[i].coordinates.count;
         for (S32 j = 0; j < length - 1; j++) {
-            Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(l_coords.d[start_index + j]),
-                                           camera);
-            Vector2 b = GetWorldToScreen2D(
-                Vector2FromCoord2(l_coords.d[start_index + j + 1]), camera);
+            Vector2 a = GetWorldToScreen2D(Vector2FromCoord2(l_coords.d[start_index + j]), camera);
+            Vector2 b =
+                GetWorldToScreen2D(Vector2FromCoord2(l_coords.d[start_index + j + 1]), camera);
             DrawLineEx(a, b, 5.0f, BLUE);
             // DEBUG("drawing: [%03.05f, %03.05f] -> [%03.05f, %03.05f]\n", a.x,
             // a.y, b.x, b.y)
@@ -651,7 +620,7 @@ static Mesh MeshFromPolygons(Arena *arena, GeoJson *polygons) {
     S32 vertex_soup_count = polygons->polygon_triangles.count * 3;
     Mesh mesh = {
         .vertexCount = vertex_soup_count,
-        .vertices = arena_alloc_array(arena, float, (size_t)vertex_soup_count * 3),
+        .vertices = arena_alloc_array(arena, float, vertex_soup_count * 3),
         .triangleCount = polygons->polygon_triangles.count,
     };
     S32 v = 0;
@@ -704,8 +673,7 @@ static void UpdateCameraPos(Camera2D *camera, Screen screen) {
     if (IsKeyPressed(KEY_R)) {
         camera->zoom = 4.0f;
         camera->rotation = 0.0f;
-        camera->offset =
-            (Vector2){(float)screen.width / 2.0f, (float)screen.height / 2.0f};
+        camera->offset = (Vector2){(float)screen.width / 2.0f, (float)screen.height / 2.0f};
         camera->target.x = 0;
         camera->target.y = 0;
     }
@@ -720,11 +688,10 @@ void GeoJsonDisplayFile(char *filename, Screen screen) {
     // Initialization
     //--------------------------------------------------------------------------------------
 
-    Camera2D camera = {
-        .offset = {(float)screen.width / 2.0f, (float)screen.height / 2.0f},
-        .rotation = 0.0f,
-        .zoom = 4.0f,
-        .target = {0, 0}};
+    Camera2D camera = {.offset = {(float)screen.width / 2.0f, (float)screen.height / 2.0f},
+                       .rotation = 0.0f,
+                       .zoom = 4.0f,
+                       .target = {0, 0}};
 
     GeoJsonRenderOptions render_options = {0};
 
@@ -762,13 +729,10 @@ void GeoJsonDisplayFile(char *filename, Screen screen) {
         BeginMode2D(camera);
         {
             DrawMesh(mesh, material, MatrixIdentity());
-            const Vector2 top_left =
-                Vector2FromCoord2(Coord2WebMecartorFromWGS84(-180.0, 90.0));
-            const Vector2 bot_right =
-                Vector2FromCoord2(Coord2WebMecartorFromWGS84(180.0, -90.0));
-            const Rectangle r =
-                (Rectangle){top_left.x, top_left.y, bot_right.x - top_left.x,
-                            bot_right.y - top_left.y};
+            const Vector2 top_left = Vector2FromCoord2(Coord2WebMecartorFromWGS84(-180.0, 90.0));
+            const Vector2 bot_right = Vector2FromCoord2(Coord2WebMecartorFromWGS84(180.0, -90.0));
+            const Rectangle r = (Rectangle){top_left.x, top_left.y, bot_right.x - top_left.x,
+                                            bot_right.y - top_left.y};
             DrawRectangleLinesEx(r, 3.f, MAGENTA);
             DrawCircleV(top_left, 3.f, GREEN);
             DrawCircleV(bot_right, 3.f, BLUE);
@@ -783,16 +747,14 @@ void GeoJsonDisplayFile(char *filename, Screen screen) {
 
         // --------------------- HUD -------------------------
         DrawText(TextFormat("CURRENT ZOOM: %03.04f", camera.zoom), 640, 10, 20, RED);
-        DrawText(TextFormat("CAMERA TARGET: [%03.04f, %03.04f]", camera.target.x,
-                            camera.target.y),
+        DrawText(TextFormat("CAMERA TARGET: [%03.04f, %03.04f]", camera.target.x, camera.target.y),
                  640, 40, 20, RED);
         DrawFPS(640, 70);
         Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
-        DrawText(TextFormat("MOUSE POS : [%03.04f, %03.04f]", mouseWorldPos.x,
-                            mouseWorldPos.y),
+        DrawText(TextFormat("MOUSE POS : [%03.04f, %03.04f]", mouseWorldPos.x, mouseWorldPos.y),
                  100, 10, 20, RED);
-        DrawText(TextFormat("Triangles: %d", serialized_coords->polygon_triangles.count),
-                 100, 40, 20, RED);
+        DrawText(TextFormat("Triangles: %d", serialized_coords->polygon_triangles.count), 100, 40,
+                 20, RED);
 
         EndDrawing();
         //----------------------------------------------------------------------------------

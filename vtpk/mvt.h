@@ -15,8 +15,8 @@
 // ------------------------  LIMITS  ------------------------
 #define MVT_TEXTURE_SIZE (512 * 4)
 #define MVT_MESH_SIZE (512 * 4)
-#define LAYER_KEYS_MAX (500)
-#define LAYER_VALUES_MAX (500)
+#define LAYER_KEYS_MAX (1000)
+#define LAYER_VALUES_MAX (1000)
 #define LAYER_FEATURES_MAX (100000)
 
 // ------------------------  STATIC DATA  ---------------------
@@ -625,9 +625,10 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
 // Draw all vector data to the specified render texture.
 // The corresponding styles are taken from the styles map provided.
 static void TileTextureFromVectorData(const VT_VectorData *data, VT_StyleMap *styles,
-                                      const RenderTexture2D *texture) {
+                                      VT_SpriteInfo sprite_info,
+                                      const RenderTexture2D *target_texture) {
     // TODO: apply styling
-    BeginTextureMode(*texture);
+    BeginTextureMode(*target_texture);
     ClearBackground(BLANK);
     for (S32 i = 0; i < data->multi_points.count; i += 1) {
         const Slice multi_point = data->multi_points.v[i];
@@ -640,11 +641,23 @@ static void TileTextureFromVectorData(const VT_VectorData *data, VT_StyleMap *st
             const Vector2 point = Vector2FromCoord2(data->texture_coords.v[j]);
             switch (point_style.type) {
             case SYMBOL: {
-                // TODO: fetch symbol sprite
+                const S64 icon_image_index =
+                    hmgeti(sprite_info.positions, point_style.paint.icon_image);
+                if (icon_image_index == -1) {
+                    // TODO: what do we do if we do not have the icon?
+                    continue;
+                }
+                assert(icon_image_index != -1);
+                const VT_SpriteValue sprite_pos = sprite_info.positions[icon_image_index].value;
+
+                DrawTextureRec(sprite_info.texture,
+                               (Rectangle){(F32)sprite_pos.x, (F32)sprite_pos.y,
+                                           (F32)sprite_pos.width, (F32)sprite_pos.height},
+                               point, WHITE);
             } break;
-            case CIRCLE:
+            case CIRCLE: {
                 DrawCircleV(point, 15.f, point_style.paint.circle_color);
-                break;
+            } break;
             case FILL:
             case LINE:
                 ERROR_MSG("unreachable");
@@ -744,12 +757,11 @@ static Mesh MeshFromPolygonGeometry(VT_VectorData *dst_vector_data,
     const S32 vertex_soup_count = triangles.count * 3;
     const Mesh mesh = (Mesh){
         // x, y, z coords per vertex
-        .vertices = arena_alloc_array(&vector_data_arena, float, (size_t)vertex_soup_count * 3),
+        .vertices = arena_alloc_array(&vector_data_arena, float, vertex_soup_count * 3),
         .vertexCount = vertex_soup_count,
         .triangleCount = triangles.count,
         // RGBA = 4 bytes per color
-        .colors =
-            arena_alloc_array(&vector_data_arena, unsigned char, (size_t)vertex_soup_count * 4)};
+        .colors = arena_alloc_array(&vector_data_arena, unsigned char, vertex_soup_count * 4)};
     dst_vector_data->vertex_count = vertex_soup_count;
     dst_vector_data->vertex_soup = mesh.vertices;
     dst_vector_data->triangle_count = mesh.triangleCount;
@@ -834,7 +846,7 @@ static VT_TileGeometry *CreateNewTile(Arena *arena, S32 tile_size) {
 // - caches the mesh/texture on a { tile_coordinate -> vector_data } map.
 static void GPU_DataFromMapboxVectorTile(VectorTileGPU_Data *gpu_data,
                                          VT_Coordinate tile_coordinate, MVT_ProtobufData data,
-                                         VT_StyleMap *style_map) {
+                                         VT_StyleMap *style_map, VT_SpriteInfo sprite_info) {
 
     // check if we already have parsed this tile, this should not happen
     {
@@ -939,9 +951,8 @@ static void GPU_DataFromMapboxVectorTile(VectorTileGPU_Data *gpu_data,
 
 // stores the data on the vector_data_arena for persistant storage.
 #define VectorDataFieldFromGeometry(Type, dst_slice, src_array)                                    \
-    dst_slice =                                                                                    \
-        (Type##Slice){.v = arena_alloc_array(&vector_data_arena, Type, (size_t)(src_array).count), \
-                      .count = (src_array).count};                                                 \
+    dst_slice = (Type##Slice){.v = arena_alloc_array(&vector_data_arena, Type, (src_array).count), \
+                              .count = (src_array).count};                                         \
     memcpy((dst_slice).v, (src_array).d, (size_t)(src_array).count * sizeof(Type));
 
     // tile vector data, seperated in mesh (polygons) and texture, sprites/lines/circle
@@ -967,7 +978,7 @@ static void GPU_DataFromMapboxVectorTile(VectorTileGPU_Data *gpu_data,
         tile_parse_start = clock();
         // work done here
         // ------------------------------------------------------------------
-        TileTextureFromVectorData(&vector_data, style_map, &gpu_data->texture);
+        TileTextureFromVectorData(&vector_data, style_map, sprite_info, &gpu_data->texture);
         // ------------------------------------------------------------------
         tile_parse_end = clock();
         tile_parse_cpu_time_seconds =
@@ -997,6 +1008,8 @@ static void GPU_DataFromMapboxVectorTile(VectorTileGPU_Data *gpu_data,
     }
 
     // cache vector data for faster redraw
+    DEBUG_MSG("[INFO] caching vector data for tile: r: %d, c: %d, l: %d\n", tile_coordinate.row,
+              tile_coordinate.col, tile_coordinate.level);
     hmput(vector_data_map, tile_coordinate, vector_data);
 
     temp_arena_memory_end(scratch);

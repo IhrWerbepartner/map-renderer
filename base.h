@@ -1,12 +1,13 @@
 #pragma once
-#include "fixed-array.c"
 #include "base_defines.h"
+#include "fixed-array.c"
 #include <assert.h>
 #include <float.h>
 #include <raylib.h>
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 // hashmap datastructure
 #define STB_DS_IMPLEMENTATION
@@ -31,25 +32,6 @@
 
 #define DOT(v0, v1) ((v0).x * (v1).x + (v0).y * (v1).y)
 
-typedef uint8_t U8;
-typedef uint16_t U16;
-typedef uint32_t U32;
-typedef uint64_t U64;
-typedef int8_t S8;
-typedef int16_t S16;
-typedef int32_t S32;
-typedef int64_t S64;
-typedef S8 B8;
-typedef S16 B16;
-typedef S32 B32;
-typedef S64 B64;
-typedef float F32;
-typedef double F64;
-typedef struct U128 U128;
-struct U128 {
-    U64 u64[2];
-};
-
 INTERNAL_FORCEINLINE U128 U128Zero(void) {
     U128 v = {0};
     return v;
@@ -61,15 +43,15 @@ INTERNAL_FORCEINLINE bool U128Match(U128 a, U128 b) {
 // global U64 max_U64 = 0xffffffffffffffffull;
 global const U32 max_U32 = 0xffffffff;
 // global U16 max_U16 = 0xffff;
-global U8 max_U8 = 0xff;
+global const U8 max_U8 = 0xff;
 //
-// global S64 max_S64 = (S64)0x7fffffffffffffffll;
+global const S64 max_S64 = (S64)0x7fffffffffffffffll;
 global const S32 max_S32 = (S32)0x7fffffff;
 // global S16 max_S16 = (S16)0x7fff;
 // global S8 max_S8 = (S8)0x7f;
 //
 // global S64 min_S64 = (S64)0x8000000000000000ll;
-global S32 min_S32 = (S32)0x80000000;
+global const S32 min_S32 = (S32)0x80000000;
 // global S16 min_S16 = (S16)0x8000;
 // global S8 min_S8 = (S8)0x80;
 //
@@ -100,7 +82,19 @@ static S32 safe_cast_s32_from_u64(U64 x) {
     return result;
 }
 
+static S64 safe_cast_s64_from_u64(U64 x) {
+    assert(x <= (U64)max_S64);
+    const S64 result = (S64)x;
+    return result;
+}
+
 static U64 safe_cast_u64_from_s32(S32 x) {
+    assert(x >= 0);
+    const U64 result = (U64)x;
+    return result;
+}
+
+static U64 safe_cast_u64_from_s64(S64 x) {
     assert(x >= 0);
     const U64 result = (U64)x;
     return result;

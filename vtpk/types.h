@@ -3,6 +3,8 @@
 #include "../string8.h"
 #include "../vendor/miniz.c"
 #include <assert.h>
+#include <raylib.h>
+#include <stdbool.h>
 typedef enum QuadTreeNodeType QuadTreeNodeType;
 enum QuadTreeNodeType {
     EMPTY = 0, // no TileIndexRecord exists
@@ -16,10 +18,24 @@ struct AABB {
     S32 min_x, min_y, max_x, max_y;
 };
 
+typedef struct QuadTreeCoordinate QuadTreeCoordinate;
+struct QuadTreeCoordinate {
+    S32 row, col, level;
+};
+
 typedef struct VT_Coordinate VT_Coordinate;
 struct VT_Coordinate {
     S32 row, col, level;
 };
+DeclFixedArray(VT_CoordinateArray, VT_Coordinate);
+
+static INTERNAL_FORCEINLINE bool QuadTreeCoordinateEq(QuadTreeCoordinate a, QuadTreeCoordinate b) {
+    return a.row == b.row && a.col == b.col && a.level == b.level;
+}
+
+static INTERNAL_FORCEINLINE bool VT_CoordinateEq(VT_Coordinate a, VT_Coordinate b) {
+    return a.row == b.row && a.col == b.col && a.level == b.level;
+}
 
 typedef struct VectorTileGPU_Data VectorTileGPU_Data;
 struct VectorTileGPU_Data {
@@ -32,7 +48,6 @@ DeclFixedArray(VectorTileGPU_DataArray, VectorTileGPU_Data);
 typedef struct VectorTileHandle VectorTileHandle;
 struct VectorTileHandle {
     VT_Coordinate coordinate;
-    S32 quad_tree_node;
     VectorTileGPU_Data gpu_data;
 };
 DeclFixedArray(VectorTileHandleArray, VectorTileHandle);
@@ -51,15 +66,16 @@ DeclFixedArray(QuadTreeNodeArray, QuadTreeNode);
 // ----------- .bundle file ------------
 typedef struct TileIndexRecord TileIndexRecord;
 struct TileIndexRecord {
-    U64 tile_offset;
-    U32 tile_size;
+    S64 tile_offset;
+    S32 tile_size;
 };
 
-TileIndexRecord TileIndexRecordFromIndex(U64 index) {
-    const U8 gzip_header_size = 10;
+static INTERNAL_FORCEINLINE TileIndexRecord TileIndexRecordFromIndex(S64 index) {
+    assert(index >= 0);
+    const S8 gzip_header_size = 10;
     return (TileIndexRecord){
-        .tile_offset = (index & bitmask40) + gzip_header_size,
-        .tile_size = safe_cast_u32(index >> 40) - gzip_header_size,
+        .tile_offset = (index & (S64)bitmask40) + gzip_header_size,
+        .tile_size = safe_cast_s32((index >> 40) - gzip_header_size),
     };
 }
 typedef struct TileBundleFileHeader TileBundleFileHeader;
@@ -77,7 +93,7 @@ struct TileBundleFileHeader {
     S32 legacy3;
     S32 legacy4;
     S32 index_size;           // has to be 131072 (128 * 128 * 8)
-    U64 tile_index[128][128]; // bits 0..39 represent offset, 40..63 the size
+    S64 tile_index[128][128]; // bits 0..39 represent offset, 40..63 the size
                               // (bytes) of a tile
 };
 static_assert(sizeof(TileBundleFileHeader) == 131136, "type has wrong size");
@@ -86,9 +102,9 @@ typedef struct VtpkFileRootProperties VtpkFileRootProperties;
 struct VtpkFileRootProperties {
     F64Array lod_resolutions;
     F64 tile_info_origin_x, tile_info_origin_y;
-    U32 lod_min, lod_max; // L{min}-L{max} .bundle dirs + files
-    U32 maxzoom;          // max logical zoom, vector data in lod_max .bundle file
-    U32 tile_info_cols, tile_info_rows;
+    S32 lod_min, lod_max; // L{min}-L{max} .bundle dirs + files
+    S32 maxzoom;          // max logical zoom, vector data in lod_max .bundle file
+    S32 tile_info_cols, tile_info_rows;
 };
 
 typedef struct VT_StyleMapKey VT_StyleMapKey;
@@ -98,7 +114,7 @@ struct VT_StyleMapKey {
     S64 filter_value;
     // NOTE: setting this to a 32-bit value introduces UB because padding can take unspecified
     // values, possibly destroying the bitwise memcmp inside stb_ds' hashmap!!
-    U64 zoom;
+    S64 zoom;
 };
 static_assert(sizeof(VT_StyleMapKey) == 32, "type has wrong size");
 
@@ -112,7 +128,7 @@ struct VT_StyleMapValue {
         Color fill_color;
         Color line_color;
         Color circle_color;
-        String8 icon_image; // referes to the sprite name
+        U64 icon_image; // referes to the hashed sprite name
     } paint;
 };
 
@@ -123,14 +139,40 @@ struct VT_StyleMap {
     VT_StyleMapValue value;
 };
 
+// usable as key in a map
+typedef struct VT_SpriteKey VT_SpriteKey;
+struct VT_SpriteKey {
+    U64 name_hash;
+};
+
+// Rectangle of sprite in sprite texture
+typedef struct VT_SpriteValue VT_SpriteValue;
+struct VT_SpriteValue {
+    S32 x, y;
+    S32 width, height;
+};
+
+typedef struct VT_SpriteMap VT_SpriteMap;
+struct VT_SpriteMap {
+    VT_SpriteKey key;
+    VT_SpriteValue value;
+};
+
+typedef struct VT_SpriteInfo VT_SpriteInfo;
+struct VT_SpriteInfo {
+    VT_SpriteMap *positions;
+    Texture2D texture;
+};
+
 typedef struct VtpkFile VtpkFile;
 struct VtpkFile {
     mz_zip_archive *archive;
     VtpkFileRootProperties root_propreties;
-    VT_StyleMap *layer_styles;
-    S32 layer_styles_count;
-    AABB bounding_box;
     QuadTreeNodeArray quad_tree;
+    AABB bounding_box;
+    VT_StyleMap *layer_styles;
+    VT_SpriteInfo sprites;
+    S32 layer_styles_count;
     S32 root_node;
 };
 

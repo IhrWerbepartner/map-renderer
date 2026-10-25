@@ -2,28 +2,30 @@
 
 #include "arena.c"
 #include "base.h"
+#include "base_defines.h"
 #include "fixed-array.c"
 #include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
 
 typedef struct String8 String8;
 struct String8 {
     const char *buf;
-    U64 len;
+    S64 len;
 };
 
-static U64 cstring8_length(const char *c) {
-    U64 length = 0;
+static S64 cstring8_length(const char *c) {
+    S64 length = 0;
     if (c) {
         const char *p = c;
         for (; *p != 0; p += 1)
             ;
-        length = (U64)(p - c);
+        length = (S64)(p - c);
     }
     return length;
 }
 
-static String8 String8FromCStringLen(const char *string, size_t len) {
+static String8 String8FromCStringLen(const char *string, S64 len) {
     return (String8){
         .buf = string,
         .len = len,
@@ -31,13 +33,13 @@ static String8 String8FromCStringLen(const char *string, size_t len) {
 }
 
 static String8 String8FromCString(const char *string) {
-    U64 len = cstring8_length(string);
+    S64 len = cstring8_length(string);
     return String8FromCStringLen(string, len);
 }
 
 // returns -1 if a is earlier 0 if equal 1 if later
 static S8 string8_compare(String8 a, String8 b) {
-    for (U64 i = 0; i < a.len && b.len; i++) {
+    for (S64 i = 0; i < a.len && b.len; i++) {
         if (a.buf[i] < b.buf[i]) {
             return -1;
         }
@@ -76,13 +78,13 @@ static bool String8StartsWith(String8 string, String8 prefix) {
 // it is currently stored
 static String8 String8Clone(Arena *arena, String8 to_clone) {
     char *cloned_str = arena_alloc(arena, to_clone.len);
-    memcpy(cloned_str, to_clone.buf, to_clone.len);
+    memcpy(cloned_str, to_clone.buf, (size_t)to_clone.len);
     return (String8){cloned_str, to_clone.len};
 }
 
 static U64 HashFromString8(U64 seed, String8 string) {
     U64 result = seed;
-    for (U64 i = 0; i < string.len; i += 1) {
+    for (S64 i = 0; i < string.len; i += 1) {
         result = ((result << 5) + result) + (U64)string.buf[i];
     }
     return result;

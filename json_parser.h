@@ -1,6 +1,5 @@
 #pragma once
 #include "arena.c"
-#include "base.h"
 #include "string8.h"
 #include <assert.h>
 #include <errno.h>
@@ -17,8 +16,7 @@ typedef enum JsonType {
 } JsonType;
 
 typedef struct JsonNode {
-    JsonType type; // type of json node, see above
-    String8 key;   // key of the property; for object's children only
+    String8 key; // key of the property; for object's children only
     union {
         String8 text_value; // text value of STRING node
         struct {
@@ -29,24 +27,23 @@ typedef struct JsonNode {
             F64 dbl_value; // the value of DOUBLE node
         } num;
         struct { // children of OBJECT or ARRAY
-            S32 count;
             struct JsonNode *first;
             struct JsonNode *last;
+            S32 count;
         } children;
     };
     struct JsonNode *prev; //  points to previous child
     struct JsonNode *next; // points to next child
+    JsonType type;         // type of json node, see above
 } JsonNode;
 
-#define JSON_REPORT_ERROR(msg, p)                                                        \
+#define JSON_REPORT_ERROR(msg, p)                                                                  \
     fprintf(stderr, "NXJSON PARSE ERROR (%d): " msg " at %s\n", __LINE__, p)
 
 #define IS_WHITESPACE(c) ((unsigned char)(c) <= (unsigned char)' ')
 
-global JsonNode json_node_null = {.type = JSON_INVALID,
-                                  .key = (String8){0},
-                                  .prev = &json_node_null,
-                                  .next = &json_node_null};
+global JsonNode json_node_null = {
+    .type = JSON_INVALID, .key = (String8){0}, .prev = &json_node_null, .next = &json_node_null};
 
 static JsonNode *JsonCreate(Arena *arena, JsonType type, String8 key, JsonNode *parent) {
     JsonNode *js = arena_alloc(arena, sizeof(JsonNode));
@@ -74,7 +71,7 @@ static String8 UnescapeString(char *s, char **end) {
         if (c == '"') {
             *d = '\0';
             *end = p;
-            return String8FromCStringLen(s, (size_t)(p - s) - 1);
+            return String8FromCStringLen(s, (p - s) - 1);
         } else if (c == '\\') {
             switch (*p) {
             case '\\':
@@ -351,8 +348,7 @@ JsonNode *JsonFindKeyValue(const JsonNode *node, const String8 key, const String
     JsonNode *current = node->children.first;
     while (current != &json_node_null) {
         if (current->type == JSON_STRING) {
-            if (String8Equals(current->key, key) &&
-                String8Equals(current->text_value, value)) {
+            if (String8Equals(current->key, key) && String8Equals(current->text_value, value)) {
                 return current;
             }
         }

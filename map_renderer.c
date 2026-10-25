@@ -27,12 +27,12 @@
 void StaticMemoryInit(void) {
     //  ================= GLOBAL ARENAS =================
     {
-        const U64 backing_buffer_size = GB(1);
+        const S64 backing_buffer_size = GB(1);
 #ifdef _WIN32
         void *backing_buffer =
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
-        void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+        void *backing_buffer = mmap(NULL, (size_t)backing_buffer_size, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
         if (backing_buffer == MAP_FAILED) {
             ERROR_MSG("unable to map memory, errno: %d", errno);
@@ -44,7 +44,7 @@ void StaticMemoryInit(void) {
         backing_buffer =
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
-        backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+        backing_buffer = mmap(NULL, (size_t)backing_buffer_size, PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
         if (backing_buffer == MAP_FAILED) {
             ERROR_MSG("unable to map memory");
@@ -55,12 +55,12 @@ void StaticMemoryInit(void) {
 
     // ================= MVT_Parser =================
     {
-        const U64 backing_buffer_size = GB(1);
+        const S64 backing_buffer_size = GB(1);
 #ifdef _WIN32
         void *backing_buffer =
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
-        void *backing_buffer = mmap(NULL, backing_buffer_size, PROT_READ | PROT_WRITE,
+        void *backing_buffer = mmap(NULL, (size_t)backing_buffer_size, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
         if (backing_buffer == MAP_FAILED) {
             ERROR_MSG("unable to map memory, errno: %d", errno);
