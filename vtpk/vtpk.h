@@ -15,7 +15,7 @@
 
 // NOTE: fine tune
 #define DRAW_CACHE_SIZE (40)
-#define DRAW_TILE_PIXEL_COUNT 512
+#define DRAW_TILE_PIXEL_COUNT (512 * 2)
 
 typedef struct DrawCache DrawCache;
 struct DrawCache {
@@ -347,9 +347,10 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
 
     // Shader shader_blur = LoadShader(0, "shaders/blur.fs");
 
-    SetTargetFPS(60);            // NOTE: for now
-    while (!WindowShouldClose()) // Detect window close button or ESC key
-    {
+    SetTargetFPS(60);
+
+    // Detect window close button or ESC key
+    while (!WindowShouldClose()) {
         // Update
         //----------------------------------------------------------------------------------
         if (IsKeyPressed(KEY_B))
@@ -378,7 +379,6 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                           LIGHTGRAY, RED);
         }
         {
-            // DrawRectangle(0, 512, tile_size, tile_size, RED);
             const VectorTileHandleSlice tiles =
                 TilesFromBoundingBox(vtpk_file, &draw_cache, ClampBot((S32)camera.zoom, 0));
             for (S32 i = 0; i < tiles.count; i += 1) {
@@ -396,7 +396,7 @@ static void VtpkDisplayFile(const char *filename, Screen screen) {
                     mesh_pos.z = mesh_transform.m14;
 
                     DrawMesh(tile.gpu_data.mesh, material,
-                             MatrixTranslate(0, MVT_MESH_SIZE - DRAW_TILE_PIXEL_COUNT, 0));
+                             MatrixTranslate(0, MVT_MESH_SIZE - (DRAW_TILE_PIXEL_COUNT / 2), 0));
                     if (render_options.show_bounding_box) {
                         const BoundingBox bbox = GetMeshBoundingBox(tile.gpu_data.mesh);
                         DrawRectangleLines((S32)bbox.min.x, (S32)bbox.min.y,

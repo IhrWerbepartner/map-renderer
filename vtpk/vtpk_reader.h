@@ -366,8 +366,8 @@ static void StyleFromJson(VtpkFile *vtpk_file) {
         // value
         const JsonNode *layer_type = JsonFindKey(layer_style, String8FromCString("type"));
         assert(layer_type->type == JSON_STRING);
-        const VT_StylePaintType paint_type = PaintTypeFromString(layer_type->text_value);
-        const VT_StyleMapValue value = StyleValueFromPaint(layer_style, paint_type);
+        key.paint_type = PaintTypeFromString(layer_type->text_value);
+        const VT_StyleMapValue value = StyleValueFromPaint(layer_style, key.paint_type);
 
         for (S32 zoom = zoom_min; zoom < zoom_max; zoom += 1) {
             key.zoom = zoom;
@@ -378,14 +378,13 @@ static void StyleFromJson(VtpkFile *vtpk_file) {
                 filter_key = filter->children.first->next->text_value;
             }
             if (hmgeti(vtpk_file->layer_styles, key) != -1) {
-                DEBUG_MSG(
-                    "[WARNING] Layer: %.*s, key: %.*s, value: %ld, zoom: %lu already exists\n",
-                    (int)source_layer->text_value.len, source_layer->text_value.buf,
-                    (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
-            } else {
-                DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %ld, zoom: %lu\n",
+                DEBUG_MSG("[WARNING] Layer: %.*s, key: %.*s, value: %d, zoom: %d already exists\n",
                           (int)source_layer->text_value.len, source_layer->text_value.buf,
-                          (int)filter_key.len, filter_key.buf, key.filter_value, key.zoom)
+                          (int)filter_key.len, filter_key.buf, (int)key.filter_value, key.zoom)
+            } else {
+                DEBUG_MSG("Creating Layer: %.*s, key: %.*s, value: %d, zoom: %d\n",
+                          (int)source_layer->text_value.len, source_layer->text_value.buf,
+                          (int)filter_key.len, filter_key.buf, (int)key.filter_value, key.zoom)
             }
             hmput(vtpk_file->layer_styles, key, value);
             vtpk_file->layer_styles_count += 1;

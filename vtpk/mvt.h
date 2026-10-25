@@ -13,8 +13,8 @@
 #include <time.h>
 
 // ------------------------  LIMITS  ------------------------
-#define MVT_TEXTURE_SIZE (512 * 4)
-#define MVT_MESH_SIZE (512 * 4)
+#define MVT_TEXTURE_SIZE (512 * 8)
+#define MVT_MESH_SIZE (512 * 8)
 #define LAYER_KEYS_MAX (1000)
 #define LAYER_VALUES_MAX (1000)
 #define LAYER_FEATURES_MAX (100000)
@@ -500,13 +500,31 @@ static void PointFromProtobufData(VT_TileGeometry *tile_geometry, const MVT_Prot
 
 // returns the index of the style. -1 if not found.
 static S64 ValueFromLayerKeyFilter(VT_StyleMap *map, String8 layer_name, String8 filter_key,
-                                   S64 filter_value, U32 zoom) {
+                                   S64 filter_value, S32 zoom, GeometryType geometry_type) {
     VT_StyleMapKey key = (VT_StyleMapKey){0};
     key.layer_hash = HashFromString8(0, layer_name);
     key.filter_key_hash = HashFromString8(0, filter_key);
     key.filter_value = filter_value;
     key.zoom = zoom;
-    return hmgeti(map, key);
+    switch (geometry_type) {
+    case GEOMETRY_TYPE_UNKNOWN:
+        ERROR_MSG("invalid geometry type when acccessing style information\n");
+    case GEOMETRY_TYPE_POINT: {
+        key.paint_type = CIRCLE;
+    } break;
+    case GEOMETRY_TYPE_LINESTRING: {
+        key.paint_type = LINE;
+    } break;
+    case GEOMETRY_TYPE_POLYGON: {
+        key.paint_type = FILL;
+    } break;
+    }
+    S64 index = hmgeti(map, key);
+    if (index == -1) {
+        key.paint_type = SYMBOL;
+        index = hmgeti(map, key);
+    }
+    return index;
 }
 
 // parses Features and writes the coords into the provided layercoords for triangulation ->
@@ -527,7 +545,9 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
         key.zoom = (U32)tile_coordinate.level;
         S64 feature_style_index = hmgeti(style_map, key);
 
-        Slice geometry_range = {0};
+        Slice geometry_slice = {0};
+        Range tags_range = {0};
+        S32 feature_field_tags_count = 0; // ensure that the tags field only appears once
         U64 ip = 0;
         while (ip < feature.size) {
             const U64 saved_ip = ip;
@@ -541,30 +561,12 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             } break;
             case FEATURE_FIELD_TAGS: {
                 // TAGS:
-                // The tags are layed out as (key: VarInt128, val: VarInt128)*
-                // Look up the style for this feature by iterating over the key-value
-                // pairs for this feature and take the last (?) one that fits.
-                // This requires writing to the Texture/Mesh here as we have the correct style
-                // info for this feature.
                 assert(feature_field.wire_type == LEN);
                 const U32 tags_size = U32FromVarInt128(feature, &ip);
-                const U64 tags_end = tags_size + ip;
-                while (ip < tags_end) {
-                    const U32 tag_key_index = U32FromVarInt128(feature, &ip);
-                    const U32 tag_value_index = U32FromVarInt128(feature, &ip);
-                    assert(tag_key_index < (U32)keys.count);
-                    assert(tag_value_index < (U32)values.count);
-                    const String8 tag_key = keys.v[tag_key_index];
-                    const ProtobufValue tag_value = values.v[tag_value_index];
-                    if (tag_value.type == VALUE_SINT) {
-                        S64 style_index = ValueFromLayerKeyFilter(style_map, layer_name, tag_key,
-                                                                  tag_value.value.sint64,
-                                                                  (U32)tile_coordinate.level);
-                        if (style_index != -1) {
-                            feature_style_index = style_index;
-                        }
-                    }
-                }
+                tags_range = (Range){.min = ip, .max = ip + tags_size};
+                ip += tags_size;
+                feature_field_tags_count += 1;
+                assert(feature_field_tags_count < 2);
             } break;
             case FEATURE_FIELD_TYPE: {
                 assert(feature_field.wire_type == VARINT);
@@ -573,7 +575,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             case FEATURE_FIELD_GEOMETRY: {
                 assert(feature_field.wire_type == LEN);
                 const U32 geometry_size = U32FromVarInt128(feature, &ip);
-                geometry_range = (Slice){.min = safe_cast_s32_from_u64(ip),
+                geometry_slice = (Slice){.min = safe_cast_s32_from_u64(ip),
                                          .count = safe_cast_s32_from_u32(geometry_size)};
                 ip += geometry_size;
             } break;
@@ -582,6 +584,32 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             }
             assert(saved_ip < ip); // ensure we are making progress
         }
+
+        // The tags are layed out as (key: VarInt128, val: VarInt128)*
+        // Look up the style for this feature by iterating over the key-value
+        // pairs for this feature and take the last (?) one that fits.
+        // This requires writing to the Texture/Mesh here as we have the correct style
+        // info for this feature.
+        assert(geometry_type != GEOMETRY_TYPE_UNKNOWN);
+        feature_style_index = ValueFromLayerKeyFilter(style_map, layer_name, (String8){0}, 0,
+                                                      tile_coordinate.level, geometry_type);
+        for (U64 i = (U64)tags_range.min; i < (U64)tags_range.max;) {
+            const U32 tag_key_index = U32FromVarInt128(feature, &i);
+            const U32 tag_value_index = U32FromVarInt128(feature, &i);
+            assert(tag_key_index < (U32)keys.count);
+            assert(tag_value_index < (U32)values.count);
+            const String8 tag_key = keys.v[tag_key_index];
+            const ProtobufValue tag_value = values.v[tag_value_index];
+            if (tag_value.type == VALUE_SINT) {
+                S64 style_index =
+                    ValueFromLayerKeyFilter(style_map, layer_name, tag_key, tag_value.value.sint64,
+                                            tile_coordinate.level, geometry_type);
+                if (style_index != -1) {
+                    feature_style_index = style_index;
+                }
+            }
+        }
+
         // for now ensure we have found each style
         if (feature_style_index == -1) {
             DEBUG_MSG("[WARINIG] no style for feature in (r: %d, c: %d, l: %d) - %.*s\n",
@@ -599,7 +627,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
         case GEOMETRY_TYPE_POINT: {
             assert(style_map[feature_style_index].value.type == CIRCLE ||
                    style_map[feature_style_index].value.type == SYMBOL);
-            PointFromProtobufData(tile_geometry, feature, geometry_range, feature_style_index,
+            PointFromProtobufData(tile_geometry, feature, geometry_slice, feature_style_index,
                                   scale_factor);
         } break;
         case GEOMETRY_TYPE_LINESTRING: {
@@ -607,7 +635,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             // https://docs.mapbox.com/style-spec/reference/layers/#layout-symbol-symbol-placement
             assert(style_map[feature_style_index].value.type == LINE ||
                    style_map[feature_style_index].value.type == SYMBOL);
-            MultiLineStringFromProtobufData(tile_geometry, feature, geometry_range,
+            MultiLineStringFromProtobufData(tile_geometry, feature, geometry_slice,
                                             feature_style_index, scale_factor);
         } break;
         case GEOMETRY_TYPE_POLYGON: {
@@ -615,7 +643,7 @@ static void FeaturesFromProtobuf(VT_TileGeometry *tile_geometry, MVT_ProtobufDat
             // https://docs.mapbox.com/style-spec/reference/layers/#layout-symbol-symbol-placement
             assert(style_map[feature_style_index].value.type == FILL ||
                    style_map[feature_style_index].value.type == SYMBOL);
-            MultiPolygonFromProtobufData(tile_geometry, feature, geometry_range,
+            MultiPolygonFromProtobufData(tile_geometry, feature, geometry_slice,
                                          feature_style_index, scale_factor);
         } break;
         }

@@ -31,6 +31,9 @@ void StaticMemoryInit(void) {
 #ifdef _WIN32
         void *backing_buffer =
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (backing_buffer == NULL) {
+            ERROR_MSG("unable to map memory, error: %lu", GetLastError());
+        }
 #else
         void *backing_buffer = mmap(NULL, (size_t)backing_buffer_size, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
@@ -43,6 +46,9 @@ void StaticMemoryInit(void) {
 #ifdef _WIN32
         backing_buffer =
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (backing_buffer == NULL) {
+            ERROR_MSG("unable to map memory, error: %lu", GetLastError());
+        }
 #else
         backing_buffer = mmap(NULL, (size_t)backing_buffer_size, PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
@@ -59,14 +65,17 @@ void StaticMemoryInit(void) {
 #ifdef _WIN32
         void *backing_buffer =
             VirtualAlloc(NULL, backing_buffer_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (backing_buffer == NULL) {
+            ERROR_MSG("unable to map memory, error: %lu", GetLastError());
+        }
 #else
         void *backing_buffer = mmap(NULL, (size_t)backing_buffer_size, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGE_8MB, -1, 0);
         if (backing_buffer == MAP_FAILED) {
             ERROR_MSG("unable to map memory, errno: %d", errno);
         }
-        arena_init(&vector_data_arena, backing_buffer, backing_buffer_size);
 #endif
+        arena_init(&vector_data_arena, backing_buffer, backing_buffer_size);
     }
 }
 

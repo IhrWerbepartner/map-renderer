@@ -107,6 +107,15 @@ struct VtpkFileRootProperties {
     S32 tile_info_cols, tile_info_rows;
 };
 
+typedef enum VT_StylePaintType VT_StylePaintType;
+enum VT_StylePaintType {
+    FILL = 1,
+    LINE,
+    SYMBOL,
+    CIRCLE,
+};
+static_assert(sizeof(VT_StylePaintType) == 4, "type has wrong size");
+
 typedef struct VT_StyleMapKey VT_StyleMapKey;
 struct VT_StyleMapKey {
     U64 layer_hash;
@@ -114,12 +123,10 @@ struct VT_StyleMapKey {
     S64 filter_value;
     // NOTE: setting this to a 32-bit value introduces UB because padding can take unspecified
     // values, possibly destroying the bitwise memcmp inside stb_ds' hashmap!!
-    S64 zoom;
+    S32 zoom;
+    VT_StylePaintType paint_type;
 };
 static_assert(sizeof(VT_StyleMapKey) == 32, "type has wrong size");
-
-typedef enum VT_StylePaintType VT_StylePaintType;
-enum VT_StylePaintType { FILL, LINE, SYMBOL, CIRCLE };
 
 typedef struct VT_StyleMapValue VT_StyleMapValue;
 struct VT_StyleMapValue {
